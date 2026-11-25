@@ -105,16 +105,41 @@ def normalize_calibration(raw, label='camera'):
                 width=int(w) if w else None, height=int(h) if h else None, label=raw.get('label') or label)
 
 
+def _file_is_y_up(filedict):
+    cs = filedict.get('coordinate_system') if isinstance(filedict, dict) else None
+    txt = (cs.get('axes') if isinstance(cs, dict) else cs if isinstance(cs, str) else '') or ''
+    flat = str(txt).lower().replace(' ', '').replace('_', '-')
+    return 'y-up' in flat or 'y=up' in flat
+
+
 def _inherit_axes(cam, filedict):
     """File chung ghi hệ toạ độ ở mức file (coordinate_system.axes có "Y-up" / "Y = Up") thì mỗi camera thừa hưởng up_axis='y'."""
     if not isinstance(cam, dict) or 'up_axis' in cam or 'world_up' in cam:
         return cam
-    cs = filedict.get('coordinate_system')
-    txt = (cs.get('axes') if isinstance(cs, dict) else cs if isinstance(cs, str) else '') or ''
-    flat = str(txt).lower().replace(' ', '').replace('_', '-')
-    if 'y-up' in flat or 'y=up' in flat:
-        return dict(cam, up_axis='y')
-    return cam
+    return dict(cam, up_axis='y') if _file_is_y_up(filedict) else cam
+
+
+def room_bounds_from(raw):
+    """Giới hạn sàn phòng [x0, y0, x1, y1] (mét, X đông, Y bắc) nếu file hiệu chuẩn có ghi, không thì None. Nhận:
+         room_bounds: [x0, y0, x1, y1]  hoặc {x_min, x_max, y_min, y_max}   (đã ở hệ X đông, Y bắc)
+         room_landmarks_m.floor_bounds_X + floor_bounds_Z   (hệ Y-up: Y bắc = -Z)"""
+    if not isinstance(raw, dict):
+        return None
+    try:
+        rb = raw.get('room_bounds')
+        if isinstance(rb, dict):
+            rb = [rb['x_min'], rb['y_min'], rb['x_max'], rb['y_max']]
+        if rb is None:
+            lm = raw.get('room_landmarks_m') or {}
+            if 'floor_bounds_X' in lm and 'floor_bounds_Z' in lm:
+                (x0, x1), (z0, z1) = lm['floor_bounds_X'], lm['floor_bounds_Z']
+                rb = [x0, -z1, x1, -z0] if _file_is_y_up(raw) else [x0, z0, x1, z1]
+        if rb is None:
+            return None
+        x0, y0, x1, y1 = (float(v) for v in rb)
+        return [min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)] if x1 != x0 and y1 != y0 else None
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def split_calibration(raw):

@@ -479,3 +479,9 @@ html,body{color:var(--text)}
 .calchk{display:flex;gap:8px;align-items:center;margin-top:8px;color:var(--muted);cursor:pointer}
 .mapfoot{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
 .mapfoot .vstat{margin-left:auto}
+
+/* ===== Map 2D đi theo khi cuộn: luôn nằm cạnh khung video, không phải cuộn lên xuống để nhìn cả hai ===== */
+@media(min-width:641px){
+  .grid>.col:last-child{align-self:start;position:sticky;top:76px}
+  .grid>.col:last-child .mapwrap canvas{max-height:calc(100vh - 330px);min-height:240px}
+}

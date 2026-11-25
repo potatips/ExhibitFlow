@@ -35,27 +35,62 @@ def ground_point(h, u, v):
     return p[:2] / p[2]
 
 
-def visible_polygon(h, w, hgt, max_dist=45.0, cam_xy=None):
-    """Vùng mặt đất camera nhìn thấy: chiếu viền ảnh (bỏ phần quá xa / trên đường chân trời)."""
+def visible_polygon(K, R, t, w, hgt, max_dist=25.0, n=40):
+    """Vùng mặt đất camera nhìn thấy: lấy mẫu dày CẢ VIỀN khung ảnh (n điểm mỗi cạnh). Tia chạm sàn thì lấy điểm chạm; tia hướng lên
+    hoặc chạm sàn quá xa thì kéo ra đúng max_dist theo hướng ngang. (Bản cũ chỉ lấy 6 điểm với hàng trên cố định ở 40-45% chiều cao
+    ảnh nên cắt mất phần sàn xa: vùng nhìn chỉ bằng một nửa thực tế và nhiều người nằm ngoài vùng.)"""
+    C = -R.T @ t
+    Ki = np.linalg.inv(K)
+    edge = [(w * i / n, 0) for i in range(n)] + [(w, hgt * i / n) for i in range(n)] + \
+           [(w * (1 - i / n), hgt) for i in range(n)] + [(0, hgt * (1 - i / n)) for i in range(n)]
     pts = []
-    for u, v in [(0, hgt), (w * 0.5, hgt), (w, hgt), (w, hgt * 0.45), (w * 0.5, hgt * 0.4), (0, hgt * 0.45)]:
-        p = ground_point(h, u, v)
-        if cam_xy is not None:
-            d = p - cam_xy
-            n = np.hypot(*d)
-            if n > max_dist:
-                p = cam_xy + d / n * max_dist
+    for u, v in edge:
+        r = R.T @ (Ki @ np.array([u, v, 1.0]))
+        hor = r[:2] / max(np.hypot(*r[:2]), 1e-9)
+        p = C[:2] + hor * max_dist
+        if r[2] < -1e-3:
+            q = C[:2] + (-C[2] / r[2]) * r[:2]
+            if np.hypot(*(q - C[:2])) <= max_dist:
+                p = q
         pts.append(p)
     return np.array(pts)
+
+
+def clip_rect(poly, b):
+    """Cắt đa giác theo hình chữ nhật b=[x0,y0,x1,y1] (Sutherland-Hodgman)."""
+    x0, y0, x1, y1 = b
+    for inside, inter in [
+        (lambda p: p[0] >= x0, lambda p, q: (x0, p[1] + (q[1] - p[1]) * (x0 - p[0]) / (q[0] - p[0]))),
+        (lambda p: p[0] <= x1, lambda p, q: (x1, p[1] + (q[1] - p[1]) * (x1 - p[0]) / (q[0] - p[0]))),
+        (lambda p: p[1] >= y0, lambda p, q: (p[0] + (q[0] - p[0]) * (y0 - p[1]) / (q[1] - p[1]), y0)),
+        (lambda p: p[1] <= y1, lambda p, q: (p[0] + (q[0] - p[0]) * (y1 - p[1]) / (q[1] - p[1]), y1))]:
+        out = []
+        for i, p in enumerate(poly):
+            q = poly[(i + 1) % len(poly)]
+            if inside(p):
+                out.append(tuple(p))
+                if not inside(q):
+                    out.append(inter(p, q))
+            elif inside(q):
+                out.append(inter(p, q))
+        poly = out
+        if not poly:
+            break
+    return np.array(poly) if poly else np.zeros((0, 2))
 
 
 def build_inputs(dataset, output):
     """transforms.json, map_config.json, dataset_profile.json tối thiểu mà collect/process của repo đọc."""
     cams, polys = {}, []
+    rb = dataset.manifest.get('room_bounds')                     # [x0,y0,x1,y1] mét nếu file hiệu chuẩn ghi giới hạn phòng
     for c in dataset.cameras:
         h, K, R, t = ground_homography(c)
         center = -R.T @ t
-        poly = visible_polygon(h, c['width'], c['height'], cam_xy=center[:2])
+        poly = visible_polygon(K, R, t, c['width'], c['height'])
+        if rb:
+            poly = clip_rect(poly, rb)
+            if len(poly) < 3:
+                raise RuntimeError(f"Camera {c['id']} không nhìn thấy phần sàn nào trong giới hạn phòng {rb}: kiểm tra hiệu chuẩn.")
         polys.append(poly)
         axis = R.T @ np.array([0.0, 0.0, 1.0])
         cams[c['id']] = dict(
@@ -65,9 +100,13 @@ def build_inputs(dataset, output):
             calibration_image_size=[c['width'], c['height']], calibration_source='site calibration (K, R, t)',
             camera_position_status='calibrated', visibility_polygon=poly.tolist())
     allp = np.vstack(polys + [np.array([v['camera_center_world'][:2] for v in cams.values()])])
-    pad = 12.0                                                                # lề rộng: người ở xa vẫn nằm trong vùng hợp lệ
-    x0, y0 = allp.min(0) - pad
-    x1, y1 = allp.max(0) + pad
+    if rb:
+        m = 0.3                                                               # biết giới hạn phòng: vùng hợp lệ = phòng (lề nhỏ)
+        x0, y0, x1, y1 = rb[0] - m, rb[1] - m, rb[2] + m, rb[3] + m
+    else:
+        pad = 12.0                                                            # lề rộng: người ở xa vẫn nằm trong vùng hợp lệ
+        x0, y0 = allp.min(0) - pad
+        x1, y1 = allp.max(0) + pad
     polygon = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]                       # CCW, hình chữ nhật bao vùng quan sát
     ppm = 20.0                                                                # điểm ảnh trên mét của "canvas"
     T = np.array([[ppm, 0, -x0 * ppm], [0, -ppm, y1 * ppm], [0, 0, 1.0]])    # bản đồ (X,Y mét) -> canvas (Y hướng lên)
@@ -83,7 +122,7 @@ def build_inputs(dataset, output):
     return transforms, config
 
 
-def collect_people(records, cam_polys=None, gate_m=1.6, keep_frames=8):
+def collect_people(records, cam_polys=None, gate_m=1.6, keep_frames=8, room_bounds=None):
     """Người theo từng mẫu thời gian: người ĐÃ HỢP NHẤT của repo (>=2 camera thấy cùng người, giữ ID của repo) cộng với
     những người CHỈ MỘT camera thấy. `fuse_and_track` của repo chỉ tạo người từ nhóm >=2 camera, nên với 1 camera (hoặc người
     nằm ngoài vùng chồng lấp) nó không ra ai; các phát hiện đơn đã chiếu xuống mặt đất (display_accepted) được theo dõi
@@ -96,6 +135,10 @@ def collect_people(records, cam_polys=None, gate_m=1.6, keep_frames=8):
         return sum(cv2.pointPolygonTest(p, (float(x), float(y)), False) >= 0 for p in polys.values())
 
     min_cover = 0 if len(polys) <= 1 else 1        # 1 camera: nhận cả người ngoài vùng nhìn gần (xa hơn); nhiều camera: chỉ vùng đúng một camera
+    rb = room_bounds
+
+    def in_room(x, y):                             # biết giới hạn phòng: bỏ người nằm ngoài phòng (bóng, phản chiếu, nhiễu)
+        return rb is None or (rb[0] - 0.3 <= x <= rb[2] + 0.3 and rb[1] - 0.3 <= y <= rb[3] + 0.3)
     ids, nxt = {}, [1]
     singles = {}                                   # khoá theo dõi -> (xy cuối, chỉ số mẫu cuối thấy)
 
@@ -112,11 +155,13 @@ def collect_people(records, cam_polys=None, gate_m=1.6, keep_frames=8):
                 continue
             used.update(p.get('member_detection_ids', []))
             used.update(p.get('candidate_detection_ids', []))
+            if not in_room(p['xy'][0], p['xy'][1]):
+                continue
             pid = ids.setdefault(('f', p.get('id')), new_id())
             people.append(dict(id=pid, x=round(float(p['xy'][0]), 3), y=round(float(p['xy'][1]), 3), cams=list(p.get('member_cameras', []))))
         # người đơn lẻ: chỉ nhận ở vùng đúng MỘT camera nhìn thấy (ngoài mọi vùng nhìn thì điểm chiếu không đáng tin, vùng chồng lấp thì tin kết quả hợp nhất của repo)
         dets = [d for d in r.get('detections', []) if d.get('display_accepted') and d.get('detection_id') not in used
-                and min_cover <= covered_by(d['xy'][0], d['xy'][1]) <= 1]
+                and in_room(d['xy'][0], d['xy'][1]) and min_cover <= covered_by(d['xy'][0], d['xy'][1]) <= 1]
         keys = [key for key, (_, last) in singles.items() if k - last <= keep_frames]
         if dets and keys:
             cost = np.array([[np.hypot(d['xy'][0] - singles[key][0][0], d['xy'][1] - singles[key][0][1]) for key in keys] for d in dets])
@@ -165,7 +210,8 @@ def main():
     room = config['rooms'][0]
     xs, ys = [p[0] for p in room['polygon']], [p[1] for p in room['polygon']]
     fps = dataset.cameras[0]['fps']
-    frames = collect_people(records, {cid: c['visibility_polygon'] for cid, c in transforms['cameras'].items()})
+    frames = collect_people(records, {cid: c['visibility_polygon'] for cid, c in transforms['cameras'].items()},
+                            room_bounds=dataset.manifest.get('room_bounds'))
     save_json(out / 'site_result.json', dict(room_id=room['id'], bounds=[min(xs), min(ys), max(xs), max(ys)], cameras=cams, fps=fps, frames=frames))
     print('SITE_RESULT_OK', len(frames), 'mau', flush=True)
 

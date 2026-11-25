@@ -504,7 +504,7 @@ async function runSite(files,siteId){
   if(!map.length)throw new Error('Không gán được video vào camera của địa điểm này');
   if(files.length>map.length)logLine(`Địa điểm ${site.name} chỉ có ${site.cameras.length} camera: bỏ qua ${files.length-map.length} video thừa.`);
   CAMRES=[];CAMIDX=-1;renderCamTabs();resetMap();
-  const fd=new FormData();fd.append('site',siteId);fd.append('events',$('#calEvents').checked?'1':'0');
+  const fd=new FormData();fd.append('site',siteId);fd.append('events','1');
   if(custom){if(S.cal.all)fd.append('calib_all',S.cal.all);
     map.forEach((m,i)=>{fd.append('cam_'+i,m.file);fd.append('label_'+i,site.labels[m.cam]);if(S.cal.per[i])fd.append('calib_'+i,S.cal.per[i])})}
   else map.forEach(m=>fd.append(m.cam,m.file));

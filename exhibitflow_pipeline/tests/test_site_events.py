@@ -148,3 +148,12 @@ def test_y_up_inherited_from_file_level_coordinate_system():
 def test_unknown_up_axis_rejected():
     with pytest.raises(se.CalibrationError):
         se.normalize_calibration(dict(make_cam(), up_axis='x'), 'a')
+
+
+def test_room_bounds_from_calibration_file():
+    y_up = {'coordinate_system': {'axes': 'Right-handed Y-up: +X = East'}, 'room_landmarks_m': {'floor_bounds_X': [-5.2, 5.2], 'floor_bounds_Z': [-5.15, 4.9]}}
+    assert se.room_bounds_from(y_up) == [-5.2, -4.9, 5.2, 5.15]                    # Y bắc = -Z
+    assert se.room_bounds_from({'room_bounds': [8, 6, 0, 1]}) == [0.0, 1.0, 8.0, 6.0]
+    assert se.room_bounds_from({'room_bounds': {'x_min': 0, 'x_max': 8, 'y_min': 1, 'y_max': 6}}) == [0.0, 1.0, 8.0, 6.0]
+    assert se.room_bounds_from({'cameras': {}}) is None
+    assert se.room_bounds_from({'room_bounds': [1, 1, 1, 5]}) is None               # suy biến

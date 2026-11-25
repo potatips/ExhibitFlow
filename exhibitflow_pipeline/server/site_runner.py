@@ -100,6 +100,8 @@ def prepare_dataset(site, videos, work_dir, seconds=None, log=print):
     manifest = dict(room_id=site['room_id'], coordinate_units='meters', map_y_axis='up', allow_open_ends=True,
                     source=f"ExhibitFlow web: {site.get('name', site['site_id'])}", pose_scales=[scale],
                     timing=dict(clock_id=f"site-{site['site_id']}", time_offset_seconds=0.0), cameras=cameras)
+    if site.get('room_bounds'):
+        manifest['room_bounds'] = site['room_bounds']                       # giới hạn sàn phòng: cắt vùng nhìn, bỏ người ngoài phòng
     (work / 'manifest.json').write_text(json.dumps(manifest, indent=1), encoding='utf-8')
     return Path(work_dir), n
 

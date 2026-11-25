@@ -593,11 +593,13 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
             allcal = await read_json_field(form.get('calib_all'), 'Hiệu chuẩn chung')
             pool = site_events.split_calibration(allcal) if allcal is not None else []
             cams, missing = {}, []
+            room_bounds = site_events.room_bounds_from(allcal)
             for pos, k in enumerate(keys):
                 up = form.get(f'cam_{k}')
                 label = str(form.get(f'label_{k}') or up.filename)
                 raw = await read_json_field(form.get(f'calib_{k}'), f'Camera {label}')
                 if raw is not None:
+                    room_bounds = room_bounds or site_events.room_bounds_from(raw)
                     items = site_events.split_calibration(raw)
                     raw = next((c for cid, c in items if cam_match(cid, k, label, up.filename)), items[0][1])
                 elif pool:
@@ -615,7 +617,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                 for v in videos.values():
                     v.unlink(missing_ok=True)
                 raise HTTPException(400, 'Thiếu hiệu chuẩn cho: ' + ', '.join(missing))
-            site = dict(site_id='custom', name='Hiệu chuẩn tự nhập', room_id='custom', sample_fps=4.0, cameras=cams)
+            site = dict(site_id='custom', name='Hiệu chuẩn tự nhập', room_id='custom', sample_fps=4.0, cameras=cams, room_bounds=room_bounds)
         else:
             for cam in site['cameras']:
                 up = form.get(cam)
