@@ -548,6 +548,13 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                 f.write(chunk)
         return dst
 
+    def cam_match(cid, k, label, filename):
+        """Id camera trong file hiệu chuẩn khớp với video: trùng khoá / nhãn, hoặc nằm trong tên file (camera_A ~ camera_A_cctv.mp4)."""
+        if not cid:
+            return False
+        c = cid.lower()
+        return c in (k.lower(), label.lower()) or (len(c) >= 3 and c in Path(filename).stem.lower())
+
     async def read_json_field(v, label):
         if v is None:
             return None
@@ -592,10 +599,9 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                 raw = await read_json_field(form.get(f'calib_{k}'), f'Camera {label}')
                 if raw is not None:
                     items = site_events.split_calibration(raw)
-                    raw = next((c for cid, c in items if cid and cid.lower() in (k.lower(), label.lower(), Path(up.filename).stem.lower())), items[0][1])
+                    raw = next((c for cid, c in items if cam_match(cid, k, label, up.filename)), items[0][1])
                 elif pool:
-                    raw = next((c for cid, c in pool if cid and cid.lower() in (k.lower(), label.lower(), Path(up.filename).stem.lower())),
-                               pool[pos][1] if pos < len(pool) else None)
+                    raw = next((c for cid, c in pool if cam_match(cid, k, label, up.filename)), pool[pos][1] if pos < len(pool) else None)
                 if raw is None:
                     missing.append(label)
                     continue

@@ -43,6 +43,7 @@ def normalize_calibration(raw, label='camera'):
          R | R_world_to_camera | rotation (3x3)  hoặc  rvec (Rodrigues, 3 số)
          t | t_world_to_camera | tvec | translation (3 số)
          dist | distortion (tuỳ chọn) ; image_width / width, image_height / height (tuỳ chọn) ; units: m (mặc định) | cm | mm
+         up_axis: 'z' (mặc định) | 'y'  — trục hướng lên của hệ toạ độ thế giới; 'y' (kiểu Y-up, vd. three.js / Unity) được đổi sang Z-up
        Quy ước OpenCV: Xcam = R @ Xworld + t, world Z hướng lên, mặt sàn Z=0. Trả dict chuẩn hoá."""
     import cv2
     if not isinstance(raw, dict):
@@ -72,6 +73,11 @@ def normalize_calibration(raw, label='camera'):
     t = t / {'m': 1.0, 'meter': 1.0, 'meters': 1.0, 'cm': 100.0, 'mm': 1000.0}.get(unit, 1.0)
     if abs(np.linalg.det(R) - 1) > 0.05 or np.abs(R @ R.T - np.eye(3)).max() > 0.05:
         raise CalibrationError(f'{label}: R không phải ma trận xoay hợp lệ (cần trực chuẩn, định thức 1)')
+    up = str(_pick(raw, 'up_axis', 'world_up') or 'z').lower().lstrip('+')
+    if up == 'y':                                       # hệ Y-up (X đông, Y lên, Z nam) -> Z-up (X đông, Y bắc, Z lên): X_cũ = A @ X_mới
+        R = R @ np.array([[1.0, 0, 0], [0, 0, 1.0], [0, -1.0, 0]])
+    elif up != 'z':
+        raise CalibrationError(f'{label}: up_axis chỉ nhận "z" hoặc "y", nhận được "{up}"')
     center = -R.T @ t
     if center[2] < 0.2:
         raise CalibrationError(f'{label}: camera nằm ở độ cao Z={center[2]:.2f} m (sát hoặc dưới sàn). Thường do R, t là camera→world '
@@ -99,13 +105,25 @@ def normalize_calibration(raw, label='camera'):
                 width=int(w) if w else None, height=int(h) if h else None, label=raw.get('label') or label)
 
 
+def _inherit_axes(cam, filedict):
+    """File chung ghi hệ toạ độ ở mức file (coordinate_system.axes có "Y-up" / "Y = Up") thì mỗi camera thừa hưởng up_axis='y'."""
+    if not isinstance(cam, dict) or 'up_axis' in cam or 'world_up' in cam:
+        return cam
+    cs = filedict.get('coordinate_system')
+    txt = (cs.get('axes') if isinstance(cs, dict) else cs if isinstance(cs, str) else '') or ''
+    flat = str(txt).lower().replace(' ', '').replace('_', '-')
+    if 'y-up' in flat or 'y=up' in flat:
+        return dict(cam, up_axis='y')
+    return cam
+
+
 def split_calibration(raw):
     """File hiệu chuẩn -> danh sách (id hoặc None, dict camera). Hiểu: một camera; {"cameras": {id: {...}}} (kiểu transforms.json);
     {"cameras": [{id, ...}]}; hoặc dict id -> hiệu chuẩn."""
     if isinstance(raw, dict) and isinstance(raw.get('cameras'), dict):
-        return [(str(k), v) for k, v in raw['cameras'].items()]
+        return [(str(k), _inherit_axes(v, raw)) for k, v in raw['cameras'].items()]
     if isinstance(raw, dict) and isinstance(raw.get('cameras'), list):
-        return [(str(c.get('id') or c.get('name') or i), c) for i, c in enumerate(raw['cameras'])]
+        return [(str(c.get('id') or c.get('name') or i), _inherit_axes(c, raw)) for i, c in enumerate(raw['cameras'])]
     if isinstance(raw, list):
         return [(str(c.get('id') or c.get('name') or i) if isinstance(c, dict) else str(i), c) for i, c in enumerate(raw)]
     if isinstance(raw, dict) and raw and all(isinstance(v, dict) for v in raw.values()) and not any(k in raw for k in ('K', 'R', 't', 'rvec')):

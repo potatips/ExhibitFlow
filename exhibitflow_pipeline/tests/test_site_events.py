@@ -120,3 +120,31 @@ def test_incidents_merge_across_cameras_and_link_fused_person():
     assert first['person_id'] == 5 and len(first['path']) == len(frames)          # đường đi lấy từ người ghép chung
     other = next(i for i in inc if i['t0'] > 5)
     assert other['person_id'] is None and other['path'] == far['path']             # không có người ghép gần: giữ đường đi từ camera
+
+
+def to_y_up(raw):
+    """Biểu diễn lại cùng camera trong hệ Y-up (X đông, Y lên, Z nam): R_cũ = R_mới @ A^-1."""
+    A = np.array([[1.0, 0, 0], [0, 0, 1.0], [0, -1.0, 0]])
+    return dict(raw, R=(np.array(raw['R']) @ A.T).tolist())
+
+
+def test_y_up_calibration_is_converted_to_z_up():
+    z_up = make_cam()
+    expected = se.normalize_calibration(z_up, 'z')
+    got = se.normalize_calibration(dict(to_y_up(z_up), up_axis='y'), 'y')
+    assert np.allclose(got['R_world_to_camera'], expected['R_world_to_camera'], atol=1e-9)
+    X = [1.5, 4.0, 0.0]
+    assert np.allclose(se.floor_mapper(got)(project(got, X))[0], X[:2], atol=1e-6)
+
+
+def test_y_up_inherited_from_file_level_coordinate_system():
+    cam = to_y_up(make_cam())
+    raw = {'coordinate_system': {'axes': 'Right-handed Y-up: +X = East, +Y = Up'}, 'cameras': {'camera_A': cam}}
+    (cid, c), = se.split_calibration(raw)
+    assert cid == 'camera_A' and c['up_axis'] == 'y'
+    assert np.allclose(se.normalize_calibration(c, 'a')['R_world_to_camera'], se.normalize_calibration(make_cam(), 'a')['R_world_to_camera'], atol=1e-9)
+
+
+def test_unknown_up_axis_rejected():
+    with pytest.raises(se.CalibrationError):
+        se.normalize_calibration(dict(make_cam(), up_axis='x'), 'a')
