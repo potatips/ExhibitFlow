@@ -634,8 +634,7 @@ function drawSiteHeat(B){
   x.drawImage(H.canvas,X(x0),Y(y0+H.ny*H.cell),H.nx*H.cell*sc,H.ny*H.cell*sc);x.restore();
   siteCams(B,true);
   const px=X(H.peak.x),py=Y(H.peak.y);x.strokeStyle=B.ink;x.lineWidth=2;x.beginPath();x.arc(px,py,13,0,7);x.stroke();
-  x.fillStyle=B.ink;x.font='600 11px Segoe UI';x.textAlign='left';x.fillText('Đông nhất',Math.min(px+17,w-70),py-14);
-  heatLegend(x,w,h);
+    heatLegend(x,w,h);
   const cams=D_.cams.filter(cm=>pointInPoly(H.peak.x,H.peak.y,cm.fov)).map(cm=>cm.id);
   MAP.shown=H.people;MAP.unit='người';
   setMapInfo(`Khu đông nhất ≈ (${H.peak.x.toFixed(1)}; ${H.peak.y.toFixed(1)}) m${cams.length?' · vùng '+cams.join(', '):''} · ~${Math.round(H.peakSec)} giây có mặt trong 1 m quanh đó`)}
