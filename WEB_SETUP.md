@@ -95,6 +95,7 @@ Bấm **Upload** (giữ `Ctrl` để chọn nhiều video). Có hiệu chuẩn h
 2. `build`: **dựng mặt bằng từ tường** (Depth-Anything V2 + SegFormer, `ArchitecturalMapBuilder`), ghi `transforms.json`, `map_config.json`. Kích thước phòng là **ước lượng từ độ sâu** (ghi rõ "model-estimated" trên ảnh).
 3. `collect` + `process`: phát hiện người (YOLO pose đa kích thước, ngoại suy điểm chân theo tỉ lệ cơ thể), tinh chỉnh ma trận chiếu, **hợp nhất người giữa các camera và gán ID chung**.
 4. `draw_floorplan`: ảnh `global_2d_map.png`. Web dùng ảnh này làm nền Map 2D.
+4b. **Nối ID bị đứt** (`stitch_ids` trong `site_events.py`): người bị che hoặc không phát hiện vài giây thì bộ theo dõi cấp ID mới nên cùng một người đổi số. Sau khi có toàn bộ kết quả, track nào bắt đầu trong vòng 3 giây sau khi một track khác kết thúc và nằm gần điểm cuối của nó (0,8 m + 0,8 m/s × khoảng hở) được nối thành một ID; hai người cùng có mặt một lúc thì không bao giờ bị nối. ID cuối được đánh số lại gọn 1..N. Trong lần thử người ngồi băng ghế từ 2 ID (#12, #77) thành 1.
 5. Engine của Hưng chạy lần lượt từng camera lấy hành vi bất thường; **điểm chân** người gây ra được đổi sang toạ độ map bằng chính ma trận `H_image_to_map` của repo (nên nằm đúng chỗ trên ảnh mặt bằng), gộp các camera cùng thấy một sự kiện, rồi nối với người ghép chung để vẽ **đường đi**.
 
 Lần đầu repo tự tải model dựng mặt bằng (vài trăm MB, cần Internet). Notebook Kaggle đã cài sẵn `ultralytics`, `shapely` và model người.
@@ -136,6 +137,7 @@ Yêu cầu video: các video **cùng một khoảng thời gian** (cùng giây b
 | `EXHIBITFLOW_SOURCE_ROOTS` | Thư mục server được phép đọc video |
 | `EXHIBITFLOW_MAX_MB` | Giới hạn upload (mặc định 600) |
 | `EXHIBITFLOW_SAVE_VIDEO=0` | Không ghi `live.mp4` (video có khung) |
+| `EXHIBITFLOW_DET_CONF` | Ngưỡng phát hiện người của detector (YOLOX `conf`). Không đặt = mặc định **0.01** của engine (giữ cả khung điểm thấp để bộ theo dõi nối ID). Tăng (vd `0.3`) để bớt phát hiện nhầm, nhưng ID dễ đứt hơn. Áp dụng từ lần phân tích sau, không phải nạp lại model. Trên Kaggle: đặt `DET_CONF` ở ô cấu hình của notebook. Xem giá trị đang dùng ở `/api/health` (`det_conf`) |
 | `EXHIBITFLOW_SITE_EVENTS=0` | Chế độ nhiều camera chỉ ghép map + người, không chạy engine hành vi bất thường |
 
 ## Gặp lỗi?

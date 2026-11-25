@@ -218,6 +218,55 @@ def homography_mapper(H, K, dist=None):
     return to_map
 
 
+def stitch_ids(frames, max_gap_s=3.0, gate_m=0.8, speed_mps=0.8):
+    """Nối các ID bị ĐỨT thành một: người bị che / không phát hiện vài giây thì bộ theo dõi cấp ID mới, nên cùng một người đổi số (vd. #12 rồi #77).
+    Chạy sau khi đã có toàn bộ kết quả (offline): track B bắt đầu SAU khi track A kết thúc, cách tối đa max_gap_s giây, và điểm đầu của B nằm gần điểm cuối
+    của A (trong gate_m + speed_mps * khoảng hở mét) thì coi là cùng một người. Ghép tham lam theo chi phí thấp nhất, mỗi track chỉ nối một trước và một sau.
+    Cuối cùng đánh số lại gọn 1..N theo thời điểm xuất hiện. frames = [{t, people: [{id, x, y, cams}]}]."""
+    tracks = {}
+    for fr in frames:
+        for p in fr['people']:
+            tracks.setdefault(p['id'], []).append((fr['t'], p['x'], p['y']))
+    info = {}
+    for i, q in tracks.items():
+        q.sort()
+        k = min(2, len(q))
+        info[i] = dict(t0=q[0][0], t1=q[-1][0], a=np.median([[x, y] for _, x, y in q[:k]], axis=0), b=np.median([[x, y] for _, x, y in q[-k:]], axis=0))
+    cands = []
+    for A, ia in info.items():
+        for B, ib in info.items():
+            gap = ib['t0'] - ia['t1']
+            if A == B or gap <= 0 or gap > max_gap_s:
+                continue
+            d = float(np.hypot(*(ia['b'] - ib['a'])))
+            allowed = gate_m + speed_mps * gap
+            if d <= allowed:
+                cands.append((d / allowed, gap, A, B))
+    cands.sort()
+    succ, pred = {}, {}
+    for _, _, A, B in cands:
+        if A not in succ and B not in pred:
+            succ[A], pred[B] = B, A
+    root = {}
+    for i in info:
+        r = i
+        while r in pred:
+            r = pred[r]
+        root[i] = r
+    new = {r: k + 1 for k, r in enumerate(sorted(set(root.values()), key=lambda r: info[r]['t0']))}
+    out = []
+    for fr in frames:
+        seen, people = set(), []
+        for p in fr['people']:
+            nid = new[root[p['id']]]
+            if nid in seen:
+                continue
+            seen.add(nid)
+            people.append(dict(p, id=nid))
+        out.append(dict(fr, people=people))
+    return out
+
+
 def _smooth(a, k=5):
     """Lọc trung vị trượt (giảm rung điểm chân), giữ nguyên độ dài."""
     if len(a) < k:

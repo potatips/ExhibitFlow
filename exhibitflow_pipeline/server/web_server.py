@@ -72,9 +72,35 @@ NW = 960                                   # web vẽ hộp hiện vật theo kh
 MAKE_MAP = os.environ.get('EXHIBITFLOW_MAKE_MAP', '1') != '0'   # tạo map 2D từ video (multicam-2d-floorplan-tracker), mất ~15-25 s/video
 
 
+def parse_det_conf(v):
+    """Ngưỡng phát hiện người từ web: số trong [0.001, 0.99], không hợp lệ thì None (giữ mặc định)."""
+    try:
+        c = float(v)
+    except (TypeError, ValueError):
+        return None
+    return c if 0.001 <= c <= 0.99 else None
+
+
+def apply_det_conf(runner, conf):
+    """Đặt ngưỡng cho detector đang nạp. YOLOX đọc `self.conf` ở mỗi lần detect, nên có hiệu lực ngay, không phải nạp lại model."""
+    if conf is None:
+        return False
+    det = getattr(getattr(getattr(runner, 'engine', None), 'M', None), 'detector', None)
+    if det is None:
+        return False
+    if hasattr(det, 'conf'):
+        det.conf = float(conf)
+    elif isinstance(getattr(det, 'kw', None), dict):
+        det.kw['conf'] = float(conf)                  # detector kiểu ultralytics
+    else:
+        return False
+    return True
+
+
 def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
     state = State(data_dir)
     runner = (DemoRunner if demo else PipelineRunner)(state, local=local)
+    web_cfg = dict(det_conf=parse_det_conf(os.environ.get('EXHIBITFLOW_DET_CONF')))   # ngưỡng phát hiện người (None = giữ mặc định 0.01 của engine)
     if mode:
         state.save_settings(dict(pipeline_mode=mode))
     if not demo and os.environ.get('EXHIBITFLOW_SAVE_VIDEO', '1') != '0':
@@ -85,6 +111,8 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
 
         def _run_video_with_live(*a, **k):
             svc.RT['render_live'] = True
+            if apply_det_conf(runner, web_cfg.get('det_conf')):
+                state.log(f"Ngưỡng phát hiện người (detector conf) = {web_cfg['det_conf']}")
             return _orig_run_video(*a, **k)
 
         svc.run_video = _run_video_with_live
@@ -212,7 +240,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
     def health():
         with state.lock:
             ms = state.models_state
-        return {'ok': True, 'version': 'ef-web-1', 'demo': demo, 'models': ms, 'jobs': len(jobs)}
+        return {'ok': True, 'version': 'ef-web-1', 'demo': demo, 'models': ms, 'jobs': len(jobs), 'det_conf': web_cfg['det_conf']}
 
     @app.get('/api/state')
     def get_state():
@@ -469,6 +497,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         return out
 
     app.state.analyze_video = analyze_video            # thay được khi kiểm thử (không cần GPU)
+    app.state.web_cfg, app.state.runner = web_cfg, runner
     app.state.site_events = app_flags['site_events']
 
     def site_device():

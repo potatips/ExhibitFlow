@@ -23,7 +23,9 @@ import numpy as np
 
 REPO = Path.cwd()
 sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(Path(__file__).resolve().parent))       # site_events.py (cùng thư mục, chạy được ngoài repo)
 
+import site_events  # noqa: E402
 from src.dataset_loader import RoomDataset  # noqa: E402
 from src.geometry import save_json  # noqa: E402
 
@@ -268,7 +270,7 @@ def main():
             print('REPO_MAP_FAILED:', note[:300], flush=True)
     if records is not None:
         polys = map_polygons(transforms, config, dataset)
-        frames = collect_people(records, polys)
+        frames = site_events.stitch_ids(collect_people(records, polys))
         T = config['T_map_to_canvas']
         cw, ch = config['canvas_size']
         if abs(T[0][1]) > 1e-6 or abs(T[1][0]) > 1e-6:
@@ -291,8 +293,8 @@ def main():
             cams.append(dict(id=c['id'], center=cam['camera_center_world'][:2], fov=cam['visibility_polygon'], H=cam['H_image_to_map']))
         room = config['rooms'][0]
         xs, ys = [p[0] for p in room['polygon']], [p[1] for p in room['polygon']]
-        frames = collect_people(records, {cid: c['visibility_polygon'] for cid, c in transforms['cameras'].items()},
-                                room_bounds=dataset.manifest.get('room_bounds'))
+        frames = site_events.stitch_ids(collect_people(records, {cid: c['visibility_polygon'] for cid, c in transforms['cameras'].items()},
+                                                       room_bounds=dataset.manifest.get('room_bounds')))
         result = dict(room_id=room['id'], bounds=[min(xs), min(ys), max(xs), max(ys)], cameras=cams, fps=fps, frames=frames,
                       map_source='fallback', map=None, map_note=note)
     save_json(out / 'site_result.json', result)

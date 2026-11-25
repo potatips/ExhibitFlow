@@ -176,3 +176,34 @@ def test_homography_mapper_matches_floor_mapper_and_handles_distortion():
         px = project(spec, X)
         assert np.allclose(se.homography_mapper(H, K, spec['dist'])(px), se.floor_mapper(spec)(px), atol=1e-6)
         assert np.allclose(se.homography_mapper(H, K, spec['dist'])(px)[0], X[:2], atol=1e-3)
+
+
+def _fr(t, *people):
+    return dict(t=t, people=[dict(id=i, x=x, y=y, cams=['C1']) for i, x, y in people])
+
+
+def test_stitch_merges_id_broken_by_occlusion_and_renumbers():
+    # người ngồi yên: ID 12 mất 2 giây rồi bị cấp ID 77 ngay chỗ cũ; người khác (ID 3) đi riêng
+    frames = [_fr(t / 2, (12, -0.5, -2.9), (3, 4 + t * 0.1, 1.0)) for t in range(0, 6)] + \
+             [_fr(t / 2, (77, -0.47, -2.92), (3, 4 + t * 0.1, 1.0)) for t in range(8, 12)]
+    out = se.stitch_ids(frames)
+    ids = {p['id'] for f in out for p in f['people']}
+    assert ids == {1, 2}                                           # gọn 1..N, 12 và 77 thành một
+    sitter = {p['id'] for f in out for p in f['people'] if abs(p['x'] + 0.5) < 0.1}
+    assert len(sitter) == 1
+
+
+def test_stitch_keeps_different_people_apart():
+    far = [_fr(0, (1, 0, 0)), _fr(1, (1, 0, 0)), _fr(5, (2, 9, 9)), _fr(6, (2, 9, 9))]        # xa nhau 12 m
+    assert {p['id'] for f in se.stitch_ids(far) for p in f['people']} == {1, 2}
+    late = [_fr(0, (1, 0, 0)), _fr(1, (1, 0, 0)), _fr(8, (2, 0.1, 0)), _fr(9, (2, 0.1, 0))]   # hở 7 s > 3 s
+    assert {p['id'] for f in se.stitch_ids(late) for p in f['people']} == {1, 2}
+    overlap = [_fr(0, (1, 0, 0), (2, 0.2, 0)), _fr(1, (1, 0, 0), (2, 0.2, 0))]               # cùng lúc có mặt: hai người thật
+    assert {p['id'] for f in se.stitch_ids(overlap) for p in f['people']} == {1, 2}
+
+
+def test_stitch_each_track_links_once():
+    # A kết thúc, B và C đều bắt đầu gần A: chỉ một trong hai được nối, người còn lại giữ ID riêng
+    frames = [_fr(0, (1, 0, 0)), _fr(1, (1, 0, 0)), _fr(2, (2, 0.1, 0), (3, 0.3, 0)), _fr(3, (2, 0.1, 0), (3, 0.3, 0))]
+    out = se.stitch_ids(frames)
+    assert len({p['id'] for f in out for p in f['people']}) == 2
