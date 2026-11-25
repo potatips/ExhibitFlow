@@ -461,7 +461,12 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         tl = (state.root / 'runs' / str(rid) / 'timeline.json') if rid else None
         if st != 'done' or tl is None or not tl.is_file() or tl.stat().st_mtime < t_start - 1:
             raise RuntimeError(msg or 'Engine không trả kết quả cho video này')
-        return json.loads(tl.read_text(encoding='utf-8'))
+        out = json.loads(tl.read_text(encoding='utf-8'))
+        try:
+            out['_run'] = json.loads((tl.parent / 'run.json').read_text(encoding='utf-8'))
+        except Exception:                                  # noqa: BLE001
+            pass
+        return out
 
     app.state.analyze_video = analyze_video            # thay được khi kiểm thử (không cần GPU)
     app.state.site_events = app_flags['site_events']
@@ -481,7 +486,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         Lỗi ở đây KHÔNG làm hỏng bản đồ ghép: kết quả vẫn trả, kèm `events_error`."""
         rpath = job['out'] / 'site_result.json'
         result = json.loads(rpath.read_text(encoding='utf-8'))
-        cam_events, errors = [], []
+        cam_events, errors, seen = [], [], []
         job['stage'] = 2
         try:
             for cam, path in job['videos'].items():
@@ -489,7 +494,11 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                 try:
                     tl = app.state.analyze_video(job, path)
                     spec = site_events.fit_to_video(site['cameras'][cam], int(tl['width']), int(tl['height']))
-                    cam_events += site_events.engine_events(tl, site_events.floor_mapper(spec), cam)
+                    H = next((c.get('H') for c in result.get('cameras', []) if c.get('id') == cam), None)
+                    # có ma trận chiếu của repo map: dùng nó (cùng hệ toạ độ với ảnh mặt bằng); không thì tự tính từ K, R, t
+                    mapper = site_events.homography_mapper(H, spec['K'], spec.get('dist')) if H else site_events.floor_mapper(spec)
+                    cam_events += site_events.engine_events(tl, mapper, cam)
+                    seen.append(dict(cam=cam, **site_events.engine_summary(tl, tl.get('_run'))))
                 except Exception as e:                      # noqa: BLE001
                     errors.append(f'{cam}: {type(e).__name__}: {e}')
                     job['log'].append(f'[events] {cam} lỗi: {e}')
@@ -498,6 +507,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                 state.save_settings(dict(max_frames=0))     # trả lại cài đặt, không cắt video của lượt phân tích sau
         job['stage'] = 3
         result['events'] = site_events.build_incidents(cam_events, result.get('frames', []))
+        result['engine'] = seen
         result['events_error'] = '; '.join(errors) or None
         rpath.write_text(json.dumps(result, separators=(',', ':')), encoding='utf-8')
 
@@ -651,6 +661,14 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         if j['status'] != 'done':
             raise HTTPException(409, 'Job chưa xong')
         return FileResponse(j['out'] / 'site_result.json', media_type='application/json')
+
+    @app.get('/api/site-jobs/{jid}/map')
+    def site_job_map(jid: str):
+        j = get_site_job(jid)
+        p = Path(j['out']) / 'global_2d_map.png' if j.get('out') else None
+        if p is None or not p.is_file():
+            raise HTTPException(404, 'Không có ảnh mặt bằng (đang dùng đường dự phòng, không có map của repo)')
+        return FileResponse(p, media_type='image/png', headers={'Cache-Control': 'no-store'})
 
     @app.get('/api/site-jobs/{jid}/video/{cam}')
     def site_job_video(jid: str, cam: str):

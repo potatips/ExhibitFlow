@@ -487,6 +487,7 @@ async function loadSites(){const s=$('#siteSel');if(!s)return;
   s.innerHTML='<option value="">Địa điểm: không (mỗi camera một map)</option>'+SITES.map(x=>`<option value="${esc(x.site_id)}">${esc(x.name)}</option>`).join('');
   s.hidden=!SITES.length;try{const v=localStorage.getItem('ef_site');if(v&&SITES.some(x=>x.site_id===v))s.value=v}catch{}}
 $('#siteSel').onchange=()=>{try{localStorage.setItem('ef_site',$('#siteSel').value)}catch{}renderCalBox()};
+async function loadImg(path){const u=await blobUrl(path);if(!u)return null;return new Promise(r=>{const im=new Image();im.onload=()=>r(im);im.onerror=()=>r(null);im.src=u})}
 async function blobUrl(path){try{return URL.createObjectURL(await(await API.f(path)).blob())}catch{return null}}
 function assignCams(files,site){          // gán video vào camera: theo số trong tên file (cam1, C2...), còn lại theo thứ tự
   const free=[...site.cameras],out=[],rest=[];
@@ -519,7 +520,8 @@ async function runSite(files,siteId){
     if(j.status==='done')break;
     await sleep(1500)}
   const res=await(await API.f(`/api/site-jobs/${id}/result`)).json();
-  SITEDATA={bounds:res.bounds,cams:res.cameras,frames:res.frames,fps:res.fps,events:res.events||[],err:res.events_error||null};
+  SITEDATA={bounds:res.bounds,cams:res.cameras,frames:res.frames,fps:res.fps,events:res.events||[],err:res.events_error||null,engine:res.engine||[],mapSource:res.map_source||'',mapNote:res.map_note||null};
+  if(res.map)SITEDATA.mapImg=await loadImg(`/api/site-jobs/${id}/map`);                // mặt bằng của repo; null -> vẽ lưới như dự phòng
   SITEDATA.heat=computeSiteHeat();SITEDATA.view=computeSiteView();
   const dur=res.frames.length/(res.fps||1);
   for(const m of map){
@@ -529,19 +531,25 @@ async function runSite(files,siteId){
     CAMRES.push({name:m.file.name,label:site.labels[m.cam]||m.cam,cam:m.cam,data,videoURL:await blobUrl(`/api/site-jobs/${id}/video/${m.cam}`),map:MAP})}
   showCam(0);setStatus(`Hoàn tất ${CAMRES.length} camera`);
   const ids=new Set(res.frames.flatMap(f=>f.people.map(p=>p.id)));
-  logLine(`Hoàn tất: ${CAMRES.length} camera ghép thành một map chung, ${ids.size} người (ID chung)`+(res.events!==undefined?`, ${SITEDATA.events.length} hành vi bất thường.`:'.')+(SITEDATA.err?` Lưu ý: ${SITEDATA.err}`:''));return true}
+  const eng=SITEDATA.engine.map(e=>`${(site.labels[e.cam]||e.cam).split(' · ')[0]}: ${e.tracks} người theo dõi, ${e.contact_s}s chạm, ${e.alerts} bất thường`).join(' · ');
+  logLine(`Hoàn tất: ${CAMRES.length} camera ghép thành một map chung, ${ids.size} người (ID chung)`+(res.events!==undefined?`, ${SITEDATA.events.length} hành vi bất thường.`:'.')
+    +(eng&&!SITEDATA.events.length?` Engine thấy → ${eng}.`:'')+(SITEDATA.err?` Lưu ý: ${SITEDATA.err}`:'')+(res.map_source==='fallback'?` Lưu ý: repo không dựng được mặt bằng nên đang vẽ lưới${res.map_note?' ('+String(res.map_note).slice(0,90)+')':''}.`:''));return true}
 function siteFrameAt(t){const F=SITEDATA.frames;let lo=0,hi=F.length-1;if(!F.length||t<F[0].t)return -1;
   while(lo<hi){const m=(lo+hi+1)>>1;F[m].t<=t?lo=m:hi=m-1}return lo}
 /* nền map ghép: sàn, lưới 5 m, vùng nhìn thấy của từng camera (dùng chung cho tab hành vi và tab heatmap) */
 function siteBase(c){
   const {x,w,h}=fit(c);x.clearRect(0,0,w,h);const D_=SITEDATA,[x0,y0,x1,y1]=D_.view||D_.bounds,pad=12;
   const sc=Math.min((w-pad*2)/(x1-x0),(h-pad*2)/(y1-y0)),ox=(w-(x1-x0)*sc)/2,oy=(h-(y1-y0)*sc)/2,X=v=>ox+(v-x0)*sc,Y=v=>oy+(y1-v)*sc;
-  x.fillStyle='#0D1217';x.beginPath();x.roundRect(ox,oy,(x1-x0)*sc,(y1-y0)*sc,6);x.fill();
-  x.strokeStyle='rgba(255,255,255,.07)';x.lineWidth=1;
-  for(let g=Math.ceil(x0/5)*5;g<x1;g+=5){x.beginPath();x.moveTo(X(g),oy);x.lineTo(X(g),oy+(y1-y0)*sc);x.stroke()}
-  for(let g=Math.ceil(y0/5)*5;g<y1;g+=5){x.beginPath();x.moveTo(ox,Y(g));x.lineTo(ox+(x1-x0)*sc,Y(g));x.stroke()}
-  return{x,w,h,X,Y,ox,oy,sc,D_}}
+  if(D_.mapImg){                                  // mặt bằng do repo multicam-2d-floorplan-tracker dựng: vẽ người / hành vi lên chính ảnh này
+    x.save();x.beginPath();x.roundRect(ox,oy,(x1-x0)*sc,(y1-y0)*sc,6);x.clip();x.drawImage(D_.mapImg,ox,oy,(x1-x0)*sc,(y1-y0)*sc);x.restore()}
+  else{
+    x.fillStyle='#0D1217';x.beginPath();x.roundRect(ox,oy,(x1-x0)*sc,(y1-y0)*sc,6);x.fill();
+    x.strokeStyle='rgba(255,255,255,.07)';x.lineWidth=1;
+    for(let g=Math.ceil(x0/5)*5;g<x1;g+=5){x.beginPath();x.moveTo(X(g),oy);x.lineTo(X(g),oy+(y1-y0)*sc);x.stroke()}
+    for(let g=Math.ceil(y0/5)*5;g<y1;g+=5){x.beginPath();x.moveTo(ox,Y(g));x.lineTo(ox+(x1-x0)*sc,Y(g));x.stroke()}}
+  return{x,w,h,X,Y,ox,oy,sc,D_,ink:D_.mapImg?'#12202B':'#fff'}}
 function siteCams(B,heat){
+  if(B.D_.mapImg)return;
   const {x,X,Y,D_,ox,oy,sc}=B,active=CAMRES[CAMIDX]&&CAMRES[CAMIDX].cam,[vx0,vy0,vx1,vy1]=D_.view||D_.bounds;
   x.save();x.beginPath();x.rect(ox,oy,(vx1-vx0)*sc,(vy1-vy0)*sc);x.clip();
   D_.cams.forEach((cm,i)=>{const col=SITE_COLORS[i%SITE_COLORS.length],on=cm.id===active;
@@ -557,9 +565,9 @@ function drawSiteMap(c,t){
   const B=siteBase(c),{x,w,h,X,Y,D_}=B;
   if(S.mapTab==='heat'){drawSiteHeat(B);return}
   siteCams(B,false);
-  const EV=D_.events||[];
-  if(S.mlayers.all){const k=siteFrameAt(t);
-    if(k>=0)for(const p of D_.frames[k].people){x.globalAlpha=.55;x.fillStyle='#3DDC97';x.beginPath();x.arc(X(p.x),Y(p.y),4,0,7);x.fill();x.globalAlpha=.8;x.fillStyle='#fff';x.font='600 10px Segoe UI';x.textAlign='left';x.fillText('#'+p.id,X(p.x)+7,Y(p.y)+3);x.globalAlpha=1}}
+  const EV=D_.events||[],noEv=!EV.length;           // chưa có hành vi nào: hiện mọi người để map không trống
+  if(S.mlayers.all||noEv){const k=siteFrameAt(t);
+    if(k>=0)for(const p of D_.frames[k].people){x.globalAlpha=D_.mapImg?.95:.55;x.fillStyle='#3DDC97';x.beginPath();x.arc(X(p.x),Y(p.y),D_.mapImg?5:4,0,7);x.fill();if(D_.mapImg){x.strokeStyle='#0B5D3B';x.lineWidth=1.5;x.stroke()}x.globalAlpha=.9;x.fillStyle=B.ink;x.font='600 10px Segoe UI';x.textAlign='left';x.fillText('#'+p.id,X(p.x)+7,Y(p.y)+3);x.globalAlpha=1}}
   for(const e of EV){const col=BEHC[e.behavior]||BEHC.stealing,P=e.path||[];
     if(S.mlayers.trails&&P.length>1){
       x.strokeStyle=col;x.lineWidth=2;x.setLineDash([5,4]);x.globalAlpha=.35;x.beginPath();P.forEach((q,i)=>i?x.lineTo(X(q[1]),Y(q[2])):x.moveTo(X(q[1]),Y(q[2])));x.stroke();x.setLineDash([]);   // toàn bộ đường đi (mờ)
@@ -575,7 +583,7 @@ function drawSiteMap(c,t){
     const tw=x.measureText(tx).width,lx=Math.min(ex+16,w-tw-10),ly=Math.max(ey-14,14);
     x.fillStyle='rgba(8,11,14,.82)';x.fillRect(lx-4,ly-11,tw+8,16);x.fillStyle=col;x.fillText(tx,lx,ly+1);x.globalAlpha=1}
   if(!EV.length){x.fillStyle='#94A0AC';x.font='13px Segoe UI';x.textAlign='center';
-    x.fillText(D_.err?'Không phân tích được hành vi: '+D_.err.slice(0,70):'Không có hành vi bất thường',w/2,h-18)}
+    x.fillText(D_.err?'Không phân tích được hành vi: '+D_.err.slice(0,70):'Không có hành vi bất thường (đang hiện mọi người)',w/2,h-18)}
   MAP.shown=EV.length;MAP.unit='hành vi';
   setMapInfo(EV.length?`${EV.length} hành vi bất thường`:D_.err?'Chưa phân tích được hành vi':'Chưa thấy hành vi bất thường')}
 
@@ -607,7 +615,7 @@ function computeSiteHeat(){
   for(const f of D_.frames)for(const p of f.people){pts.push([p.x,p.y]);ids.add(p.id)}
   const H=heatCompute(pts,D_.bounds,Math.max(.25,Math.min(1,Math.max(x1-x0,y1-y0)/160)),.9,1/(D_.fps||4),true);H.people=ids.size;return H}
 function computeSiteView(){                   // khung nhìn thu gọn quanh người, camera và hành vi (không vẽ cả vùng đệm rộng của map)
-  const D_=SITEDATA,B=D_.bounds;let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9,n=0;
+  const D_=SITEDATA,B=D_.bounds;if(D_.mapImg)return B;let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9,n=0;
   const add=(a,b)=>{if(a<x0)x0=a;if(a>x1)x1=a;if(b<y0)y0=b;if(b>y1)y1=b;n++};
   for(const f of D_.frames)for(const p of f.people)add(p.x,p.y);
   for(const e of D_.events||[]){add(e.x,e.y);for(const q of e.path||[])add(q[1],q[2])}
@@ -625,8 +633,8 @@ function drawSiteHeat(B){
   x.save();x.beginPath();x.roundRect(ox,oy,(vx1-vx0)*sc,(vy1-vy0)*sc,6);x.clip();x.imageSmoothingEnabled=true;
   x.drawImage(H.canvas,X(x0),Y(y0+H.ny*H.cell),H.nx*H.cell*sc,H.ny*H.cell*sc);x.restore();
   siteCams(B,true);
-  const px=X(H.peak.x),py=Y(H.peak.y);x.strokeStyle='#fff';x.lineWidth=2;x.beginPath();x.arc(px,py,13,0,7);x.stroke();
-  x.fillStyle='#fff';x.font='600 11px Segoe UI';x.textAlign='left';x.fillText('Đông nhất',Math.min(px+17,w-70),py-14);
+  const px=X(H.peak.x),py=Y(H.peak.y);x.strokeStyle=B.ink;x.lineWidth=2;x.beginPath();x.arc(px,py,13,0,7);x.stroke();
+  x.fillStyle=B.ink;x.font='600 11px Segoe UI';x.textAlign='left';x.fillText('Đông nhất',Math.min(px+17,w-70),py-14);
   heatLegend(x,w,h);
   const cams=D_.cams.filter(cm=>pointInPoly(H.peak.x,H.peak.y,cm.fov)).map(cm=>cm.id);
   MAP.shown=H.people;MAP.unit='người';

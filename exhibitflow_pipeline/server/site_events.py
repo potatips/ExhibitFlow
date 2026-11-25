@@ -197,6 +197,27 @@ def floor_mapper(spec):
     return to_floor
 
 
+def homography_mapper(H, K, dist=None):
+    """Như floor_mapper nhưng dùng ma trận chiếu ảnh -> map (H_image_to_map) do repo map ghi trong transforms_refined.json, để vị trí hành vi
+    bất thường nằm cùng hệ toạ độ với ảnh mặt bằng và người của repo. Điểm ảnh vẫn là của video GỐC: khử méo trước (K, dist), H áp lên ảnh đã khử méo."""
+    import cv2
+    H = np.asarray(H, float)
+    K = np.asarray(K, float)
+    d = np.asarray(dist or [], float)
+
+    def to_map(pts):
+        p = np.asarray(pts, np.float64).reshape(-1, 1, 2)
+        if d.size and d.any():
+            p = cv2.undistortPoints(p, K, d, P=K)
+        p = p.reshape(-1, 2)
+        h = np.c_[p, np.ones(len(p))] @ H.T
+        with np.errstate(divide='ignore', invalid='ignore'):
+            xy = h[:, :2] / h[:, 2:3]
+        xy[~np.isfinite(xy).all(1)] = np.nan
+        return xy
+    return to_map
+
+
 def _smooth(a, k=5):
     """Lọc trung vị trượt (giảm rung điểm chân), giữ nguyên độ dài."""
     if len(a) < k:
@@ -204,6 +225,24 @@ def _smooth(a, k=5):
     pad = k // 2
     p = np.pad(a, ((pad, pad), (0, 0)), mode='edge')
     return np.stack([np.median(p[i:i + k], axis=0) for i in range(len(a))])
+
+
+def engine_summary(timeline, run=None):
+    """Engine đã thấy gì ở một camera (để biết vì sao không có hành vi bất thường): số người theo dõi, số giây có chạm hiện vật,
+    số sự kiện chạm, số bị VLM xếp bất thường / bình thường / chưa chắc. `run` = run.json do dashboard ghi (tuỳ chọn)."""
+    fps = float(timeline.get('fps') or 25.0)
+    ids, contact = set(), 0
+    for v in timeline.get('frames', {}).values():
+        boxes = v[0]
+        ids.update(int(b[0]) for b in boxes)
+        contact += any(b[5] for b in boxes if len(b) > 5)
+    out = dict(tracks=len(ids), contact_s=round(contact / fps, 1), alerts=len(timeline.get('alerts') or []), events=None, normal=None, uncertain=None)
+    if run:
+        s = run.get('summary') or {}
+        out['events'] = s.get('n_events')
+        d = [t.get('decision') for t in run.get('vlm_tasks') or []]
+        out['normal'], out['uncertain'] = d.count('NORMAL'), d.count('CANDIDATE')
+    return out
 
 
 def engine_events(timeline, to_floor, cam='C1'):

@@ -1,15 +1,21 @@
-"""Chạy các bước LÕI của repo multicam-2d-floorplan-tracker trên camera đã hiệu chuẩn, KHÔNG dựng tường từ độ sâu.
+"""Chạy pipeline của repo multicam-2d-floorplan-tracker trên camera đã hiệu chuẩn (K, R, t) và gom kết quả cho web.
 
-Dành cho địa điểm không có tường (sân ngoài trời như WILDTRACK) hoặc đã có hiệu chuẩn K/R/t chính xác: bộ dựng mặt bằng
-(`ArchitecturalMapBuilder`) của repo cần tường nên bị bỏ qua. Dùng lại nguyên của repo:
-  src.observations.collect   phát hiện người (YOLO pose đa kích thước, ngoại suy điểm chân theo tỉ lệ cơ thể)
-  src.projection_pipeline.process   tinh chỉnh ma trận chiếu, hợp nhất người giữa camera, ID chung (src.fusion)
+Đường chính (đúng như `main.py --mode all` của repo, chỉ bỏ phần xuất video kiểm chứng):
+  build                         dựng MẶT BẰNG từ tường (Depth-Anything + SegFormer, ArchitecturalMapBuilder), transforms.json, map_config.json
+  src.observations.collect      phát hiện người (YOLO pose đa kích thước, ngoại suy điểm chân theo tỉ lệ cơ thể)
+  src.projection_pipeline.process   tinh chỉnh ma trận chiếu, hợp nhất người giữa các camera, ID chung
+  draw_floorplan                ảnh mặt bằng global_2d_map.png (web dùng làm nền Map 2D)
+Toạ độ trong kết quả là toạ độ MAP của repo (mét, theo ảnh mặt bằng); web vẽ người / hành vi bất thường lên chính ảnh đó.
 
-Chạy từ thư mục repo:  python site_driver.py --data-dir D --output-dir O --frames N [--weights W] [--device cpu]
-Kết quả: O/projections.json (fused_people theo từng mẫu thời gian), O/site_result.json (khung map, camera, FOV, người theo thời gian).
+Đường dự phòng: nếu bước dựng mặt bằng của repo lỗi (cảnh không có tường: "Insufficient points for a structural plane") thì bỏ qua nó,
+tự dựng transforms/map_config tối thiểu từ K/R/t (không có ảnh mặt bằng, web vẽ lưới + vùng nhìn), vẫn chạy collect + process.
+
+Chạy từ thư mục repo:  python site_driver.py --data-dir D --output-dir O --frames N [--weights W] [--device cpu] [--map repo|fallback]
+Kết quả: O/site_result.json (map, camera, người theo thời gian) + các file của repo (projections.json, global_2d_map.png...).
 """
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -188,6 +194,57 @@ def collect_people(records, cam_polys=None, gate_m=1.6, keep_frames=8, room_boun
     return frames
 
 
+def ensure_structural_models():
+    """Model dựng mặt bằng của repo (Depth-Anything V2 + SegFormer, vài trăm MB): thiếu thì tải bằng script của repo (cần Internet)."""
+    m = REPO / 'models'
+    if (m / 'depth_anything_v2_metric_hypersim_vits.pth').is_file() and (m / 'segformer-b2').exists() and (m / 'Depth-Anything-V2').exists():
+        return
+    print('Tải model dựng mặt bằng của repo...', flush=True)
+    subprocess.run([sys.executable, str(REPO / 'scripts' / 'download_structural_models.py')], check=True, cwd=str(REPO))
+
+
+def repo_pipeline(dataset, out, weights, frames, device):
+    """Pipeline của repo: dựng mặt bằng + phát hiện / chiếu / hợp nhất người + vẽ ảnh mặt bằng. Trả (records, map_config, transforms_refined)."""
+    import cv2
+    ensure_structural_models()
+    from main import build                                    # main.py của repo (cwd = thư mục repo)
+    from src.map_builder import draw_floorplan
+    from src.observations import collect
+    from src.projection_pipeline import process
+    build(dataset, out)
+    collect(dataset, out, weights, dataset.manifest.get('pose_scales', [1280]), device, frame_count=frames)
+    records = process(out)
+    config = json.loads((out / 'map_config.json').read_text())
+    transforms = json.loads((out / 'transforms_refined.json').read_text())
+    if not cv2.imwrite(str(out / 'global_2d_map.png'), draw_floorplan(config, transforms['cameras'])):
+        raise RuntimeError('Không ghi được global_2d_map.png')
+    return records, config, transforms
+
+
+def map_polygons(transforms, config, dataset):
+    """Vùng sàn mỗi camera nhìn thấy, theo toạ độ map của repo (cắt theo phòng); dùng để chọn người chỉ một camera thấy."""
+    polys = {}
+    try:
+        from shapely.geometry import Polygon
+        room = Polygon(config['rooms'][0]['polygon'])
+    except Exception:                                          # noqa: BLE001
+        room = None
+    for c in dataset.cameras:
+        cam = transforms['cameras'][c['id']]
+        try:
+            P = visible_polygon(np.asarray(cam['K_estimated'], float), np.asarray(cam['R_world_to_camera'], float),
+                                np.asarray(cam['t_world_to_camera'], float), c['width'], c['height'])
+            if room is not None:
+                g = Polygon(P).buffer(0).intersection(room)
+                if g.is_empty:
+                    continue
+                P = np.asarray(g.exterior.coords) if g.geom_type == 'Polygon' else np.asarray(max(g.geoms, key=lambda q: q.area).exterior.coords)
+            polys[c['id']] = np.asarray(P, float)
+        except Exception:                                      # noqa: BLE001
+            continue
+    return polys
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--data-dir', type=Path, required=True)
@@ -195,25 +252,51 @@ def main():
     ap.add_argument('--frames', type=int, required=True)
     ap.add_argument('--weights', type=Path, default=REPO / 'models' / 'yolo11n-pose.pt')
     ap.add_argument('--device', default='cpu')
+    ap.add_argument('--map', choices=['repo', 'fallback'], default='repo', help='repo: mặt bằng + chiếu của repo; fallback: bỏ qua bước dựng mặt bằng')
     a = ap.parse_args()
     out = a.output_dir
     out.mkdir(parents=True, exist_ok=True)
     dataset = RoomDataset(a.data_dir)
-    transforms, config = build_inputs(dataset, out)
-    from src.observations import collect
-    from src.projection_pipeline import process
-    scales = dataset.manifest.get('pose_scales', [1280])
-    collect(dataset, out, a.weights, scales, a.device, frame_count=a.frames)
-    records = process(out)
-    # kết quả gọn cho web
-    cams = [dict(id=cid, center=c['camera_center_world'][:2], fov=c['visibility_polygon']) for cid, c in transforms['cameras'].items()]
-    room = config['rooms'][0]
-    xs, ys = [p[0] for p in room['polygon']], [p[1] for p in room['polygon']]
     fps = dataset.cameras[0]['fps']
-    frames = collect_people(records, {cid: c['visibility_polygon'] for cid, c in transforms['cameras'].items()},
-                            room_bounds=dataset.manifest.get('room_bounds'))
-    save_json(out / 'site_result.json', dict(room_id=room['id'], bounds=[min(xs), min(ys), max(xs), max(ys)], cameras=cams, fps=fps, frames=frames))
-    print('SITE_RESULT_OK', len(frames), 'mau', flush=True)
+    records = config = transforms = None
+    note = None
+    if a.map == 'repo':
+        try:
+            records, config, transforms = repo_pipeline(dataset, out, a.weights, a.frames, a.device)
+        except Exception as e:                                 # noqa: BLE001
+            note = f'{type(e).__name__}: {e}'
+            print('REPO_MAP_FAILED:', note[:300], flush=True)
+    if records is not None:
+        polys = map_polygons(transforms, config, dataset)
+        frames = collect_people(records, polys)
+        T = config['T_map_to_canvas']
+        cw, ch = config['canvas_size']
+        if abs(T[0][1]) > 1e-6 or abs(T[1][0]) > 1e-6:
+            raise RuntimeError('Phép biến đổi map->ảnh của repo có xoay, web chưa vẽ được')
+        bounds = [(0 - T[0][2]) / T[0][0], (ch - T[1][2]) / T[1][1], (cw - T[0][2]) / T[0][0], (0 - T[1][2]) / T[1][1]]
+        cams = [dict(id=c['id'], center=transforms['cameras'][c['id']]['camera_xy_estimate'], H=transforms['cameras'][c['id']]['H_image_to_map'],
+                     fov=(polys[c['id']].tolist() if c['id'] in polys else []), K_map=transforms['cameras'][c['id']].get('K_estimated'))
+                for c in dataset.cameras]
+        result = dict(room_id=config['rooms'][0]['id'], bounds=bounds, cameras=cams, fps=fps, frames=frames, map_source='repo',
+                      map=dict(file='global_2d_map.png', T=T, canvas=[cw, ch], metric=config.get('metric_status')))
+    else:                                                      # dự phòng: không có ảnh mặt bằng
+        from src.observations import collect
+        from src.projection_pipeline import process
+        transforms, config = build_inputs(dataset, out)
+        collect(dataset, out, a.weights, dataset.manifest.get('pose_scales', [1280]), a.device, frame_count=a.frames)
+        records = process(out)
+        cams = []
+        for c in dataset.cameras:
+            cam = transforms['cameras'][c['id']]
+            cams.append(dict(id=c['id'], center=cam['camera_center_world'][:2], fov=cam['visibility_polygon'], H=cam['H_image_to_map']))
+        room = config['rooms'][0]
+        xs, ys = [p[0] for p in room['polygon']], [p[1] for p in room['polygon']]
+        frames = collect_people(records, {cid: c['visibility_polygon'] for cid, c in transforms['cameras'].items()},
+                                room_bounds=dataset.manifest.get('room_bounds'))
+        result = dict(room_id=room['id'], bounds=[min(xs), min(ys), max(xs), max(ys)], cameras=cams, fps=fps, frames=frames,
+                      map_source='fallback', map=None, map_note=note)
+    save_json(out / 'site_result.json', result)
+    print('SITE_RESULT_OK', len(frames), 'mau', result['map_source'], flush=True)
 
 
 if __name__ == '__main__':

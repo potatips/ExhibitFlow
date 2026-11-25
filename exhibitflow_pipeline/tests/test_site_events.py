@@ -157,3 +157,22 @@ def test_room_bounds_from_calibration_file():
     assert se.room_bounds_from({'room_bounds': {'x_min': 0, 'x_max': 8, 'y_min': 1, 'y_max': 6}}) == [0.0, 1.0, 8.0, 6.0]
     assert se.room_bounds_from({'cameras': {}}) is None
     assert se.room_bounds_from({'room_bounds': [1, 1, 1, 5]}) is None               # suy biến
+
+
+def test_engine_summary_counts_tracks_contact_and_decisions():
+    tl = dict(fps=10, frames={'0': [[[1, .1, .1, .2, .5, 0], [2, .3, .1, .4, .5, 0]], []],
+                              '1': [[[1, .1, .1, .2, .5, 1]], []], '2': [[[1, .1, .1, .2, .5, 1]], []]},
+              alerts=[dict(tid=1, behavior='touching', conf=.8, start=1, end=2)])
+    s = se.engine_summary(tl, dict(summary=dict(n_events=3), vlm_tasks=[dict(decision='NORMAL'), dict(decision='CANDIDATE'), dict(decision='ANOMALY')]))
+    assert (s['tracks'], s['contact_s'], s['alerts'], s['events'], s['normal'], s['uncertain']) == (2, 0.2, 1, 3, 1, 1)
+    assert se.engine_summary(tl)['events'] is None
+
+
+def test_homography_mapper_matches_floor_mapper_and_handles_distortion():
+    spec = se.normalize_calibration(make_cam(dist=[-0.2, 0.05, 0.0004, 0.0002, 0.0]), 'a')
+    K, R, t = (np.array(spec[k]) for k in ('K', 'R_world_to_camera', 't_world_to_camera'))
+    H = np.linalg.inv(K @ np.column_stack([R[:, 0], R[:, 1], t]))
+    for X in ([0.5, 3.0, 0.0], [-2.0, 6.0, 0.0]):
+        px = project(spec, X)
+        assert np.allclose(se.homography_mapper(H, K, spec['dist'])(px), se.floor_mapper(spec)(px), atol=1e-6)
+        assert np.allclose(se.homography_mapper(H, K, spec['dist'])(px)[0], X[:2], atol=1e-3)
