@@ -464,3 +464,18 @@ html,body{color:var(--text)}
 .camtabs .tg:hover{border-color:var(--accent)}
 .camtabs .tg.on{background:var(--accent);border-color:var(--accent);color:#1A0C02}
 #siteSel{flex:0 0 auto;max-width:240px}
+
+/* ===== Ô hiệu chuẩn camera + tab dưới map ===== */
+.calbox{margin:0 0 12px;padding:10px 12px;border:1px solid #323B45;border-radius:4px;background:rgba(13,18,23,.7);font-size:12.5px}
+.calbox[hidden]{display:none}
+.calhd{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+.calhd b{font-size:13px;color:var(--text)}
+.calhint{color:var(--muted)}
+.calrow{display:flex;align-items:center;gap:8px;margin:5px 0;min-width:0}
+.calrow[hidden]{display:none}
+.calrow>span{flex:0 1 46%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.calrow em{font-style:normal;color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.calrow em.ok{color:var(--ok)}
+.calchk{display:flex;gap:8px;align-items:center;margin-top:8px;color:var(--muted);cursor:pointer}
+.mapfoot{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+.mapfoot .vstat{margin-left:auto}

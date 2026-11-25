@@ -57,6 +57,12 @@
           <button class="btn stop" id="stopBtn" disabled>Dừng</button>
         </div>
         <div class="srcmsg" id="srcmsg"></div>
+        <div class="calbox" id="calBox" hidden>
+          <div class="calhd"><b>Hiệu chuẩn camera</b><span class="calhint">File JSON gồm K, R, t của từng camera (mét, quy ước OpenCV) hoặc một file chung cho cả các camera (như transforms.json). Có hiệu chuẩn thì các video được ghép thành một map và hành vi bất thường được chiếu lên map.</span></div>
+          <div class="calrows" id="calRows"></div>
+          <div class="calrow" id="calAllRow"><span>Một file chung cho tất cả camera</span><input type="file" id="calAll" accept=".json,application/json" hidden><button class="btn sm" id="calAllBtn" type="button">Chọn file</button><em id="calAllName">chưa chọn</em></div>
+          <label class="calchk"><input type="checkbox" id="calEvents" checked> Chiếu hành vi bất thường lên map (chạy thêm engine trên từng camera, lâu hơn)</label>
+        </div>
         <div class="vbar"><div class="camtabs" id="camTabs" hidden></div><div class="live grn" id="live" hidden></div><div class="rthud" id="rthud" hidden></div></div>
         <div class="stage-wrap">
           <video id="vid" playsinline muted hidden></video>
@@ -89,11 +95,12 @@
           <canvas id="map"></canvas>
           <div class="mapnote" id="mapNote" hidden>Chưa có dữ liệu bản đồ 2D cho kết quả này.</div>
         </div>
+        <div class="mapfoot"><div class="filters" id="mapTabs"><button class="tg on" data-mt="events">Hành vi bất thường</button><button class="tg" data-mt="heat">Heatmap</button></div><span class="vstat" id="mapInfo"></span></div>
         <div class="ctrl">
           <div class="legend" style="margin:0">
             <span style="--c:var(--ok)">Người</span><span style="--c:var(--touch)">Đang chạm</span><span style="--c:var(--steal)">Cảnh báo</span><span style="--c:var(--art)">Hiện vật</span>
           </div>
-          <div class="tog" id="mlayers"><button class="tg on" data-m="trails">Vệt đi</button><button class="tg on" data-m="zones">Vùng gần</button><button class="tg" data-m="heat">Heatmap</button></div>
+          <div class="tog" id="mlayers"><button class="tg on" data-m="trails">Vệt đi</button><button class="tg on" data-m="zones">Vùng gần</button><button class="tg" data-m="heat">Heatmap</button><button class="tg" data-m="all">Mọi người</button></div>
         </div>
       </div>
     </div>

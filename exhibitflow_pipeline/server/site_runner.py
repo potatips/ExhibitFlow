@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import site_events  # noqa: E402  (cùng thư mục)
+
 HERE = Path(__file__).resolve().parent
 SITES_DIR = HERE / 'sites'
 
@@ -62,14 +64,15 @@ def prepare_dataset(site, videos, work_dir, seconds=None, log=print):
     n = max(1, int(total * sfps))
     cameras = []
     for cam, cap in caps.items():
-        spec = site['cameras'][cam]
-        K = np.asarray(spec['K'], float)
-        dist = np.asarray(spec.get('dist', [0, 0, 0, 0, 0]), float)
-        undist = bool(np.any(dist))
         fps = cap.get(cv2.CAP_PROP_FPS)
         w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        if (w, h) != (spec['width'], spec['height']):
-            raise RuntimeError(f'{cam}: video {w}x{h} khác kích thước hiệu chuẩn {spec["width"]}x{spec["height"]}')
+        try:                                                # video khác độ phân giải hiệu chuẩn (vd. hạ 240p): co K theo tỉ lệ
+            spec = site_events.fit_to_video(site['cameras'][cam], w, h)
+        except RuntimeError as e:
+            raise RuntimeError(f'{cam}: {e}')
+        K = np.asarray(spec['K'], float)
+        dist = np.asarray(spec.get('dist') or [0, 0, 0, 0, 0], float)
+        undist = bool(np.any(dist))
         folder = work / cam / 'frames'
         folder.mkdir(parents=True, exist_ok=True)
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -93,8 +96,9 @@ def prepare_dataset(site, videos, work_dir, seconds=None, log=print):
                             t_world_to_camera=spec['t_world_to_camera']))
     for c in cameras:
         c['frames'] = n
+    scale = max(640, min(1920, int(max(c['width'] for c in cameras) * 1.5)))      # video nhỏ không cần phóng tới 1920
     manifest = dict(room_id=site['room_id'], coordinate_units='meters', map_y_axis='up', allow_open_ends=True,
-                    source=f"ExhibitFlow web: {site.get('name', site['site_id'])}", pose_scales=[1920],
+                    source=f"ExhibitFlow web: {site.get('name', site['site_id'])}", pose_scales=[scale],
                     timing=dict(clock_id=f"site-{site['site_id']}", time_offset_seconds=0.0), cameras=cameras)
     (work / 'manifest.json').write_text(json.dumps(manifest, indent=1), encoding='utf-8')
     return Path(work_dir), n
@@ -102,8 +106,9 @@ def prepare_dataset(site, videos, work_dir, seconds=None, log=print):
 
 def run_repo(repo, data_dir, out_dir, frames, site_room, device='cpu', log=print, timeout=3600):
     """Chạy main.py của repo (mode all). Trả thư mục kết quả (chứa global_2d_map.png, projections.json...)."""
-    repo = Path(repo)
-    out_dir = Path(out_dir)
+    repo = Path(repo).resolve()
+    data_dir = Path(data_dir).resolve()                  # tiến trình con chạy ở thư mục repo: đường dẫn tương đối sẽ sai
+    out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     weights = repo / 'models' / 'yolo11n-pose.pt'
     # site_driver.py chạy các bước lõi của repo (collect + process) trên camera đã hiệu chuẩn, bỏ qua bước dựng tường (cần phòng kín)

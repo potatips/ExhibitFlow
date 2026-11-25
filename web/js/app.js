@@ -161,7 +161,7 @@ function drawMap(c,o){
 /* ===================== Dashboard ===================== */
 const CFG=window.EF_CONFIG||{demo:false};
 const S={t:0,playing:false,speed:1,videoURL:null,file:null,filter:'all',loaded:false,running:false,cancel:false,jobId:null,
-  progress:0,srcName:'',layers:{boxes:true,skel:false,labels:true,art:false},mlayers:{trails:true,zones:true,heat:false}};
+  progress:0,srcName:'',layers:{boxes:true,skel:false,labels:true,art:false},mlayers:{trails:true,zones:true,heat:false,all:false},mapTab:'events'};
 const vid=$('#vid');
 let LIVE=null;
 S.mode=(()=>{try{return localStorage.getItem('ef_mode')==='rt'?'rt':'batch'}catch{return 'batch'}})();S.liveSim=false;
@@ -306,8 +306,11 @@ function drawRealMap(c,t){
     x.fillStyle='#fff';x.font='600 11px Segoe UI';x.fillText('#'+p.id,X(p.x)+9,Y(p.y)+4)}}
 function drawMapPanel(t){const c=$('#map');   // true nếu đã vẽ map thật; false thì vẽ khung giữ chỗ như cũ
   if(typeof SITEDATA!=='undefined'&&SITEDATA){drawSiteMap(c,t);return true}
-  if(MAP.img&&MAP.img.complete&&MAP.img.naturalWidth){drawRealMap(c,t);return true}
-  drawMap(c,DATA.real?{live:false,t:0,...S.mlayers}:{live:S.loaded,t,...S.mlayers});return false}
+  if(MAP.img&&MAP.img.complete&&MAP.img.naturalWidth){drawRealMap(c,t);if(S.mapTab==='heat')drawRealHeat(c);else setMapInfo('');return true}
+  if(S.mapTab==='heat'){const {x,w,h}=fit(c);x.clearRect(0,0,w,h);x.fillStyle='#0D1217';x.fillRect(0,0,w,h);x.fillStyle='#94A0AC';x.font='13px Segoe UI';x.textAlign='center';
+    x.fillText('Heatmap cần dữ liệu thật: chạy phân tích video để có.',w/2,h/2);MAP.shown=0;setMapInfo('');return false}
+  drawMap(c,DATA.real?{live:false,t:0,...S.mlayers}:{live:S.loaded,t,...S.mlayers});setMapInfo('');return false}
+let _mapInfo='';function setMapInfo(s){if(s!==_mapInfo){_mapInfo=s;$('#mapInfo').textContent=s}}
 
 /* ---------- Phát lại ---------- */
 function setPlaying(p){S.playing=p;$('#play').textContent=p?'⏸':'▶';if(S.videoURL)p?vid.play().catch(()=>{}):vid.pause()}
@@ -321,7 +324,7 @@ function paint(){const t=S.t,L=$('#live');
   if(LIVE){const {x,w,h}=fit($('#scene'));x.clearRect(0,0,w,h);
     $('#ph').style.left=(D?t/D*100:0)+'%';$('#time').textContent=fmt(t)+' / '+fmt(D);L.hidden=false;
     if(LIVE.banner&&performance.now()<LIVE.banner.until){L.className='live '+LIVE.banner.cls;L.textContent=LIVE.banner.text}else{L.className='live grn';L.textContent='● LIVE'}
-    {const m=drawMapPanel(t);$('#mapCount').textContent=(m?MAP.shown:0)+' người'}
+    {const m=drawMapPanel(t);$('#mapCount').textContent=(m?MAP.shown:0)+' '+(MAP.unit||'người')}
     return}
   if(S.loaded)drawScene(t);else{const {x,w,h}=fit($('#scene'));x.clearRect(0,0,w,h)}
   const hasMap=drawMapPanel(t);
@@ -331,7 +334,7 @@ function paint(){const t=S.t,L=$('#live');
     if(an){L.className='live red';L.textContent=`Visitor #${an.track}: ${evLabel(an)} — ${(DATA.arts.find(a=>a.id===an.art)||{name:'hiện vật '+an.art}).name}`}
     else if(ca){L.className='live yel';L.textContent=`Visitor #${ca.track} cần xác nhận`}
     else{L.className='live grn';L.textContent='● Bình thường'}}
-  $('#mapCount').textContent=hasMap?MAP.shown+' người':DATA.real?'0 người':(S.loaded?activeAt(t).length:0)+' người';
+  $('#mapCount').textContent=hasMap?MAP.shown+' '+(MAP.unit||'người'):DATA.real?'0 người':(S.loaded?activeAt(t).length:0)+' người';
   const act=S.loaded?activeEvents(t):[];
   $$('#alerts .al').forEach(el=>el.classList.toggle('act',act.some(e=>e.id==el.dataset.id&&e.decision!=='NORMAL')))}
 
@@ -438,7 +441,7 @@ async function runDemoRealtime(cam){
   S.liveSim=false;S.progress=100;renderAll();setStatus('Hoàn tất (mô phỏng)');logLine('Hoàn tất.')}
 function setMode(m){S.mode=m;try{localStorage.setItem('ef_mode',m)}catch{}
   $$('#modeSel .tg').forEach(b=>b.classList.toggle('on',b.dataset.mode===m));
-  applySourceUI()}
+  applySourceUI();renderCalBox()}
 $('#modeSel').onclick=e=>{const b=e.target.closest('[data-mode]');if(b&&!S.running)setMode(b.dataset.mode)};
 
 async function startAnalysis(){
@@ -448,7 +451,7 @@ async function startAnalysis(){
   if(!cam&&!S.file&&!src){setStatus('Chưa có video');logLine('Chưa có video: bấm Upload hoặc nhập đường dẫn / URL.');return}
   S.cancel=false;S.progress=0;setBusy(true);renderKpis();
   try{
-    if(API.ok&&!cam&&S.mode==='batch'&&S.files.length>=1&&$('#siteSel').value)await runSite(S.files,$('#siteSel').value);
+    if(API.ok&&!cam&&S.mode==='batch'&&S.files.length>=1&&($('#siteSel').value||calOn()))await runSite(S.files,$('#siteSel').value||'__custom__');
     else if(API.ok&&!cam&&S.mode==='batch'&&S.files.length>1)await runMulti(S.files);
     else if(API.ok)await(S.mode==='rt'?runRealtime(src,cam):runLive(src));
     else if(CFG.demo)await(S.mode==='rt'?runDemoRealtime(cam):runDemo());
@@ -483,7 +486,7 @@ async function loadSites(){const s=$('#siteSel');if(!s)return;
   try{SITES=API.ok?await(await API.f('/api/sites')).json():[]}catch{SITES=[]}
   s.innerHTML='<option value="">Địa điểm: không (mỗi camera một map)</option>'+SITES.map(x=>`<option value="${esc(x.site_id)}">${esc(x.name)}</option>`).join('');
   s.hidden=!SITES.length;try{const v=localStorage.getItem('ef_site');if(v&&SITES.some(x=>x.site_id===v))s.value=v}catch{}}
-$('#siteSel').onchange=()=>{try{localStorage.setItem('ef_site',$('#siteSel').value)}catch{}};
+$('#siteSel').onchange=()=>{try{localStorage.setItem('ef_site',$('#siteSel').value)}catch{}renderCalBox()};
 async function blobUrl(path){try{return URL.createObjectURL(await(await API.f(path)).blob())}catch{return null}}
 function assignCams(files,site){          // gán video vào camera: theo số trong tên file (cam1, C2...), còn lại theo thứ tự
   const free=[...site.cameras],out=[],rest=[];
@@ -492,11 +495,19 @@ function assignCams(files,site){          // gán video vào camera: theo số t
   for(const f of rest){if(!free.length)break;out.push({cam:free.shift(),file:f})}
   return out.sort((a,b)=>site.cameras.indexOf(a.cam)-site.cameras.indexOf(b.cam))}
 async function runSite(files,siteId){
-  const site=SITES.find(s=>s.site_id===siteId),map=assignCams(files,site);
+  const custom=siteId==='__custom__';           // hiệu chuẩn tự nhập: camera đặt tên theo thứ tự video
+  let site,map;
+  if(custom){const ids=files.map((_,i)=>'C'+(i+1));
+    site={site_id:siteId,name:'Hiệu chuẩn tự nhập',cameras:ids,labels:Object.fromEntries(files.map((f,i)=>[ids[i],`CAM ${i+1} · ${f.name}`]))};
+    map=files.map((f,i)=>({cam:ids[i],file:f}))}
+  else{site=SITES.find(s=>s.site_id===siteId);map=assignCams(files,site)}
   if(!map.length)throw new Error('Không gán được video vào camera của địa điểm này');
   if(files.length>map.length)logLine(`Địa điểm ${site.name} chỉ có ${site.cameras.length} camera: bỏ qua ${files.length-map.length} video thừa.`);
   CAMRES=[];CAMIDX=-1;renderCamTabs();resetMap();
-  const fd=new FormData();fd.append('site',siteId);map.forEach(m=>fd.append(m.cam,m.file));
+  const fd=new FormData();fd.append('site',siteId);fd.append('events',$('#calEvents').checked?'1':'0');
+  if(custom){if(S.cal.all)fd.append('calib_all',S.cal.all);
+    map.forEach((m,i)=>{fd.append('cam_'+i,m.file);fd.append('label_'+i,site.labels[m.cam]);if(S.cal.per[i])fd.append('calib_'+i,S.cal.per[i])})}
+  else map.forEach(m=>fd.append(m.cam,m.file));
   logLine(map.map(m=>`${site.labels[m.cam]||m.cam} ← ${m.file.name}`).join(' · '));setStatus('Ghép camera');
   const id=(await(await API.f('/api/site-jobs',{method:'POST',body:fd})).json()).job_id;S.jobId=id;
   for(;;){
@@ -508,36 +519,143 @@ async function runSite(files,siteId){
     if(j.status==='done')break;
     await sleep(1500)}
   const res=await(await API.f(`/api/site-jobs/${id}/result`)).json();
-  SITEDATA={bounds:res.bounds,cams:res.cameras,frames:res.frames,fps:res.fps};
+  SITEDATA={bounds:res.bounds,cams:res.cameras,frames:res.frames,fps:res.fps,events:res.events||[],err:res.events_error||null};
+  SITEDATA.heat=computeSiteHeat();SITEDATA.view=computeSiteView();
   const dur=res.frames.length/(res.fps||1);
   for(const m of map){
-    const data={real:true,raw:null,meta:{duration:dur,camera_id:m.file.name,width:1920,height:1080,nw:960},arts:[],tracks:[],events:[]};
+    const evs=SITEDATA.events.filter(e=>e.cams.includes(m.cam)).map(e=>({id:e.id,track:e.person_id!=null?e.person_id:'?',art:e.artifact!=null?e.artifact:'?',start:e.t0,end:e.t1,
+      behavior:e.behavior,decision:'ANOMALY',conf:e.conf,reason:e.evidence||'Engine phát hiện hành vi bất thường.',review:null,img:null}));
+    const data={real:true,raw:null,meta:{duration:dur,camera_id:m.file.name,width:1920,height:1080,nw:960},arts:[],tracks:[],events:evs};
     CAMRES.push({name:m.file.name,label:site.labels[m.cam]||m.cam,cam:m.cam,data,videoURL:await blobUrl(`/api/site-jobs/${id}/video/${m.cam}`),map:MAP})}
   showCam(0);setStatus(`Hoàn tất ${CAMRES.length} camera`);
   const ids=new Set(res.frames.flatMap(f=>f.people.map(p=>p.id)));
-  logLine(`Hoàn tất: ${CAMRES.length} camera ghép thành một map chung, ${ids.size} người (ID chung).`);return true}
+  logLine(`Hoàn tất: ${CAMRES.length} camera ghép thành một map chung, ${ids.size} người (ID chung)`+(res.events!==undefined?`, ${SITEDATA.events.length} hành vi bất thường.`:'.')+(SITEDATA.err?` Lưu ý: ${SITEDATA.err}`:''));return true}
 function siteFrameAt(t){const F=SITEDATA.frames;let lo=0,hi=F.length-1;if(!F.length||t<F[0].t)return -1;
   while(lo<hi){const m=(lo+hi+1)>>1;F[m].t<=t?lo=m:hi=m-1}return lo}
-function drawSiteMap(c,t){
-  const {x,w,h}=fit(c);x.clearRect(0,0,w,h);const D_=SITEDATA,[x0,y0,x1,y1]=D_.bounds,pad=12;
+/* nền map ghép: sàn, lưới 5 m, vùng nhìn thấy của từng camera (dùng chung cho tab hành vi và tab heatmap) */
+function siteBase(c){
+  const {x,w,h}=fit(c);x.clearRect(0,0,w,h);const D_=SITEDATA,[x0,y0,x1,y1]=D_.view||D_.bounds,pad=12;
   const sc=Math.min((w-pad*2)/(x1-x0),(h-pad*2)/(y1-y0)),ox=(w-(x1-x0)*sc)/2,oy=(h-(y1-y0)*sc)/2,X=v=>ox+(v-x0)*sc,Y=v=>oy+(y1-v)*sc;
   x.fillStyle='#0D1217';x.beginPath();x.roundRect(ox,oy,(x1-x0)*sc,(y1-y0)*sc,6);x.fill();
   x.strokeStyle='rgba(255,255,255,.07)';x.lineWidth=1;
   for(let g=Math.ceil(x0/5)*5;g<x1;g+=5){x.beginPath();x.moveTo(X(g),oy);x.lineTo(X(g),oy+(y1-y0)*sc);x.stroke()}
   for(let g=Math.ceil(y0/5)*5;g<y1;g+=5){x.beginPath();x.moveTo(ox,Y(g));x.lineTo(ox+(x1-x0)*sc,Y(g));x.stroke()}
-  const active=CAMRES[CAMIDX]&&CAMRES[CAMIDX].cam;
+  return{x,w,h,X,Y,ox,oy,sc,D_}}
+function siteCams(B,heat){
+  const {x,X,Y,D_,ox,oy,sc}=B,active=CAMRES[CAMIDX]&&CAMRES[CAMIDX].cam,[vx0,vy0,vx1,vy1]=D_.view||D_.bounds;
+  x.save();x.beginPath();x.rect(ox,oy,(vx1-vx0)*sc,(vy1-vy0)*sc);x.clip();
   D_.cams.forEach((cm,i)=>{const col=SITE_COLORS[i%SITE_COLORS.length],on=cm.id===active;
     x.beginPath();cm.fov.forEach((p,k)=>k?x.lineTo(X(p[0]),Y(p[1])):x.moveTo(X(p[0]),Y(p[1])));x.closePath();
-    x.globalAlpha=on?.28:.13;x.fillStyle=col;x.fill();x.globalAlpha=on?.9:.45;x.strokeStyle=col;x.lineWidth=on?2:1;x.stroke();x.globalAlpha=1;
+    if(!heat){x.globalAlpha=on?.28:.13;x.fillStyle=col;x.fill()}
+    x.globalAlpha=on?.9:.45;x.strokeStyle=col;x.lineWidth=on?2:1;x.stroke();x.globalAlpha=1;
     x.fillStyle=col;x.beginPath();x.arc(X(cm.center[0]),Y(cm.center[1]),6,0,7);x.fill();
     x.fillStyle='#fff';x.font='600 11px Segoe UI';x.textAlign='left';x.fillText(cm.id,X(cm.center[0])+9,Y(cm.center[1])+4)});
-  const k=siteFrameAt(t);let n=0;
-  if(k>=0){const cur=D_.frames[k].people;n=cur.length;
-    if(S.mlayers.trails){const t0=t-6;for(const p of cur){x.strokeStyle='rgba(61,220,151,.55)';x.lineWidth=2;x.beginPath();let st=false;
-      for(let j=k;j>=0&&D_.frames[j].t>=t0;j--){const q=D_.frames[j].people.find(r=>r.id===p.id);if(!q)continue;st?x.lineTo(X(q.x),Y(q.y)):(x.moveTo(X(q.x),Y(q.y)),st=true)}x.stroke()}}
-    for(const p of cur){x.fillStyle='#3DDC97';x.beginPath();x.arc(X(p.x),Y(p.y),5.5,0,7);x.fill();x.strokeStyle='#0B0F13';x.lineWidth=1.5;x.stroke();
-      x.fillStyle='#fff';x.font='600 11px Segoe UI';x.fillText('#'+p.id,X(p.x)+8,Y(p.y)+4)}}
-  MAP.shown=n}
+  x.restore()}
+const BEHC={stealing:'#FF4D4D',holding:'#FF7A1A',touching:'#FFB020'};
+/* map chỉ hiện hành vi bất thường + đường đi của người gây ra; "Mọi người" bật thêm người bình thường */
+function drawSiteMap(c,t){
+  const B=siteBase(c),{x,w,h,X,Y,D_}=B;
+  if(S.mapTab==='heat'){drawSiteHeat(B);return}
+  siteCams(B,false);
+  const EV=D_.events||[];
+  if(S.mlayers.all){const k=siteFrameAt(t);
+    if(k>=0)for(const p of D_.frames[k].people){x.globalAlpha=.55;x.fillStyle='#3DDC97';x.beginPath();x.arc(X(p.x),Y(p.y),4,0,7);x.fill();x.globalAlpha=.8;x.fillStyle='#fff';x.font='600 10px Segoe UI';x.textAlign='left';x.fillText('#'+p.id,X(p.x)+7,Y(p.y)+3);x.globalAlpha=1}}
+  for(const e of EV){const col=BEHC[e.behavior]||BEHC.stealing,P=e.path||[];
+    if(S.mlayers.trails&&P.length>1){
+      x.strokeStyle=col;x.lineWidth=2;x.setLineDash([5,4]);x.globalAlpha=.35;x.beginPath();P.forEach((q,i)=>i?x.lineTo(X(q[1]),Y(q[2])):x.moveTo(X(q[1]),Y(q[2])));x.stroke();x.setLineDash([]);   // toàn bộ đường đi (mờ)
+      x.globalAlpha=.95;x.lineWidth=3;x.beginPath();let st=false,li=-1;                                                                  // đoạn đã đi tới thời điểm t (sáng)
+      for(let i=0;i<P.length&&P[i][0]<=t;i++){st?x.lineTo(X(P[i][1]),Y(P[i][2])):(x.moveTo(X(P[i][1]),Y(P[i][2])),st=true);li=i}
+      if(st)x.stroke();x.globalAlpha=1;
+      x.lineWidth=2;x.beginPath();x.arc(X(P[0][1]),Y(P[0][2]),4,0,7);x.stroke();                                                            // điểm bắt đầu
+      if(li>=0&&t<=P[P.length-1][0]+1){x.fillStyle=col;x.beginPath();x.arc(X(P[li][1]),Y(P[li][2]),5,0,7);x.fill();x.strokeStyle='#0B0F13';x.lineWidth=1.5;x.stroke()}}
+    const on=t>=e.t0-.5&&t<=e.t1+.5,pulse=on?(Math.sin(t*8)+1)*4:0,ex=X(e.x),ey=Y(e.y);                                                        // nơi xảy ra
+    x.globalAlpha=t<e.t0-.5?.5:1;x.strokeStyle=col;x.lineWidth=2.5;x.beginPath();x.arc(ex,ey,11+pulse,0,7);x.stroke();
+    x.beginPath();x.moveTo(ex-6,ey-6);x.lineTo(ex+6,ey+6);x.moveTo(ex+6,ey-6);x.lineTo(ex-6,ey+6);x.stroke();
+    const tx=`${(BEH[e.behavior]||BEH.stealing).t} · ${fmt(e.t0)}`;x.font='600 11px Segoe UI';x.textAlign='left';
+    const tw=x.measureText(tx).width,lx=Math.min(ex+16,w-tw-10),ly=Math.max(ey-14,14);
+    x.fillStyle='rgba(8,11,14,.82)';x.fillRect(lx-4,ly-11,tw+8,16);x.fillStyle=col;x.fillText(tx,lx,ly+1);x.globalAlpha=1}
+  if(!EV.length){x.fillStyle='#94A0AC';x.font='13px Segoe UI';x.textAlign='center';
+    x.fillText(D_.err?'Không phân tích được hành vi: '+D_.err.slice(0,70):'Không có hành vi bất thường',w/2,h-18)}
+  MAP.shown=EV.length;MAP.unit='hành vi';
+  setMapInfo(EV.length?`${EV.length} hành vi bất thường`:D_.err?'Chưa phân tích được hành vi':'Chưa thấy hành vi bất thường')}
+
+/* ---------- Heatmap: người tập trung ở khu nào (thời gian có mặt, cộng dồn cả video) ---------- */
+const HEATRAMP=[[0,[20,40,120]],[.25,[30,140,200]],[.5,[60,220,140]],[.7,[255,210,60]],[.85,[255,122,26]],[1,[255,60,60]]];
+function heatColor(v){for(let i=1;i<HEATRAMP.length;i++){const[a,ca]=HEATRAMP[i-1],[b,cb]=HEATRAMP[i];if(v<=b){const u=(v-a)/(b-a||1);return ca.map((c,k)=>Math.round(c+(cb[k]-c)*u))}}return HEATRAMP[HEATRAMP.length-1][1]}
+/* pts: [[x,y],...] mỗi điểm = một mẫu người, dt = số giây mỗi mẫu; bounds [x0,y0,x1,y1]; yUp: true nếu y tăng lên trên (map mét), false nếu y tăng xuống (ảnh) */
+function heatCompute(pts,b,cell,sigma,dt,yUp){
+  const [x0,y0,x1,y1]=b,nx=Math.max(1,Math.ceil((x1-x0)/cell)),ny=Math.max(1,Math.ceil((y1-y0)/cell)),raw=new Float32Array(nx*ny);
+  for(const p of pts){const i=Math.floor((p[0]-x0)/cell),j=Math.floor((p[1]-y0)/cell);if(i>=0&&i<nx&&j>=0&&j<ny)raw[j*nx+i]+=dt}
+  const s=Math.max(.8,sigma/cell),r=Math.ceil(s*2.5),k=[];let ks=0;for(let i=-r;i<=r;i++){const v=Math.exp(-i*i/(2*s*s));k.push(v);ks+=v}k.forEach((v,i)=>k[i]=v/ks);
+  const tmp=new Float32Array(nx*ny),g=new Float32Array(nx*ny);
+  for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){let a=0;for(let q=-r;q<=r;q++){const ii=i+q;if(ii>=0&&ii<nx)a+=raw[j*nx+ii]*k[q+r]}tmp[j*nx+i]=a}
+  for(let i=0;i<nx;i++)for(let j=0;j<ny;j++){let a=0;for(let q=-r;q<=r;q++){const jj=j+q;if(jj>=0&&jj<ny)a+=tmp[jj*nx+i]*k[q+r]}g[j*nx+i]=a}
+  let mx=0,mi=0;for(let i=0;i<g.length;i++)if(g[i]>mx){mx=g[i];mi=i}
+  const H={nx,ny,cell,max:mx,peak:null,peakSec:0,canvas:null,yUp};
+  if(mx>0){const pi=mi%nx,pj=Math.floor(mi/nx);H.peak={x:x0+(pi+.5)*cell,y:y0+(pj+.5)*cell};
+    const rr=Math.max(1,Math.round(1/cell));for(let j=Math.max(0,pj-rr);j<=Math.min(ny-1,pj+rr);j++)for(let i=Math.max(0,pi-rr);i<=Math.min(nx-1,pi+rr);i++)H.peakSec+=raw[j*nx+i];   // giây có mặt trong ~1 m quanh đỉnh
+    const cv=document.createElement('canvas');cv.width=nx;cv.height=ny;const cx=cv.getContext('2d'),im=cx.createImageData(nx,ny);
+    for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){const v=g[j*nx+i]/mx,row=yUp?ny-1-j:j,o=(row*nx+i)*4;
+      if(v>=.04){const c=heatColor(v);im.data[o]=c[0];im.data[o+1]=c[1];im.data[o+2]=c[2];im.data[o+3]=Math.round(255*Math.min(.9,.25+v*.75))}}
+    cx.putImageData(im,0,0);H.canvas=cv}
+  return H}
+function heatLegend(x,w,h){const gx=14,gy=h-26,gw=110;const gr=x.createLinearGradient(gx,0,gx+gw,0);HEATRAMP.forEach(([p,c])=>gr.addColorStop(p,`rgb(${c})`));
+  x.fillStyle='rgba(8,11,14,.7)';x.fillRect(gx-6,gy-16,gw+12,34);x.fillStyle=gr;x.fillRect(gx,gy,gw,7);
+  x.fillStyle='#E9EDF0';x.font='600 10px Segoe UI';x.textAlign='left';x.fillText('Ít',gx,gy-5);x.textAlign='right';x.fillText('Nhiều',gx+gw,gy-5)}
+function computeSiteHeat(){
+  const D_=SITEDATA,[x0,y0,x1,y1]=D_.bounds,pts=[],ids=new Set();
+  for(const f of D_.frames)for(const p of f.people){pts.push([p.x,p.y]);ids.add(p.id)}
+  const H=heatCompute(pts,D_.bounds,Math.max(.25,Math.min(1,Math.max(x1-x0,y1-y0)/160)),.9,1/(D_.fps||4),true);H.people=ids.size;return H}
+function computeSiteView(){                   // khung nhìn thu gọn quanh người, camera và hành vi (không vẽ cả vùng đệm rộng của map)
+  const D_=SITEDATA,B=D_.bounds;let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9,n=0;
+  const add=(a,b)=>{if(a<x0)x0=a;if(a>x1)x1=a;if(b<y0)y0=b;if(b>y1)y1=b;n++};
+  for(const f of D_.frames)for(const p of f.people)add(p.x,p.y);
+  for(const e of D_.events||[]){add(e.x,e.y);for(const q of e.path||[])add(q[1],q[2])}
+  for(const c of D_.cams)add(c.center[0],c.center[1]);
+  if(!n)return B;
+  const m=Math.max(3,.12*Math.max(x1-x0,y1-y0)),minS=14;
+  x0-=m;x1+=m;y0-=m;y1+=m;
+  if(x1-x0<minS){const c=(x0+x1)/2;x0=c-minS/2;x1=c+minS/2}
+  if(y1-y0<minS){const c=(y0+y1)/2;y0=c-minS/2;y1=c+minS/2}
+  return[Math.max(B[0],x0),Math.max(B[1],y0),Math.min(B[2],x1),Math.min(B[3],y1)]}
+function pointInPoly(px,py,P){let ins=false;for(let i=0,j=P.length-1;i<P.length;j=i++){const[a,b]=P[i],[c,d]=P[j];if((b>py)!==(d>py)&&px<(c-a)*(py-b)/(d-b)+a)ins=!ins}return ins}
+function drawSiteHeat(B){
+  const {x,w,h,X,Y,ox,oy,sc,D_}=B,H=D_.heat,[x0,y0]=D_.bounds,[vx0,vy0,vx1,vy1]=D_.view||D_.bounds;
+  if(!H||!H.canvas){siteCams(B,true);x.fillStyle='#94A0AC';x.font='13px Segoe UI';x.textAlign='center';x.fillText('Chưa có người nào được ghi nhận để vẽ heatmap',w/2,h/2);MAP.shown=0;MAP.unit='người';setMapInfo('');return}
+  x.save();x.beginPath();x.roundRect(ox,oy,(vx1-vx0)*sc,(vy1-vy0)*sc,6);x.clip();x.imageSmoothingEnabled=true;
+  x.drawImage(H.canvas,X(x0),Y(y0+H.ny*H.cell),H.nx*H.cell*sc,H.ny*H.cell*sc);x.restore();
+  siteCams(B,true);
+  const px=X(H.peak.x),py=Y(H.peak.y);x.strokeStyle='#fff';x.lineWidth=2;x.beginPath();x.arc(px,py,13,0,7);x.stroke();
+  x.fillStyle='#fff';x.font='600 11px Segoe UI';x.textAlign='left';x.fillText('Đông nhất',Math.min(px+17,w-70),py-14);
+  heatLegend(x,w,h);
+  const cams=D_.cams.filter(cm=>pointInPoly(H.peak.x,H.peak.y,cm.fov)).map(cm=>cm.id);
+  MAP.shown=H.people;MAP.unit='người';
+  setMapInfo(`Khu đông nhất ≈ (${H.peak.x.toFixed(1)}; ${H.peak.y.toFixed(1)}) m${cams.length?' · vùng '+cams.join(', '):''} · ~${Math.round(H.peakSec)} giây có mặt trong 1 m quanh đó`)}
+function drawRealHeat(c){                  // map 1 camera của dashboard (toạ độ 0-1 của ảnh map): heatmap từ vị trí theo khung khi phát lại
+  const {x,w,h}=fit(c),im=MAP.img;if(!MAP.keys||!MAP.keys.length){x.fillStyle='rgba(8,11,14,.6)';x.fillRect(0,0,w,h);x.fillStyle='#94A0AC';x.font='13px Segoe UI';x.textAlign='center';
+    x.fillText('Heatmap hiện sau khi video chạy xong',w/2,h/2);setMapInfo('');return}
+  if(!MAP.heat){const pts=[];for(const k of MAP.keys)for(const q of MAP.frames[k])pts.push([q[1],q[2]]);MAP.heat=heatCompute(pts,[0,0,1,1],1/64,.03,1/(MAP.fps||25),false)}
+  const pad=10,s=Math.min((w-pad*2)/im.naturalWidth,(h-pad*2)/im.naturalHeight),iw=im.naturalWidth*s,ih=im.naturalHeight*s,ox=(w-iw)/2,oy=(h-ih)/2,H=MAP.heat;
+  if(!H.canvas){setMapInfo('Chưa có người nào được ghi nhận');return}
+  x.save();x.beginPath();x.roundRect(ox,oy,iw,ih,6);x.clip();x.fillStyle='rgba(8,11,14,.45)';x.fillRect(ox,oy,iw,ih);x.imageSmoothingEnabled=true;x.drawImage(H.canvas,ox,oy,iw,ih);x.restore();
+  x.strokeStyle='#fff';x.lineWidth=2;x.beginPath();x.arc(ox+H.peak.x*iw,oy+H.peak.y*ih,13,0,7);x.stroke();heatLegend(x,w,h);
+  setMapInfo(`Khu đông nhất ≈ (${(H.peak.x*100).toFixed(0)}%, ${(H.peak.y*100).toFixed(0)}%) của map · ~${Math.round(H.peakSec)} giây có mặt`)}
+
+/* ---------- Hiệu chuẩn camera tự nhập: mỗi video một file JSON (K, R, t), hoặc một file chung cho cả các camera ---------- */
+S.cal={per:{},all:null};
+const calOn=()=>!!S.cal.all||Object.keys(S.cal.per).length>0;
+function renderCalBox(){const box=$('#calBox'),preset=!!$('#siteSel').value;
+  const show=API.ok&&S.mode==='batch'&&S.files.length>=1;box.hidden=!show;if(!show)return;
+  $('#calRows').hidden=preset;$('#calAllRow').hidden=preset;
+  $('#calRows').innerHTML=S.files.map((f,i)=>`<div class="calrow"><span title="${esc(f.name)}">CAM ${i+1} · ${esc(f.name)}</span><input type="file" accept=".json,application/json" data-cal="${i}" hidden><button class="btn sm" type="button" data-calbtn="${i}">Chọn hiệu chuẩn</button><em class="${S.cal.per[i]?'ok':''}">${S.cal.per[i]?esc(S.cal.per[i].name):'chưa chọn'}</em></div>`).join('');
+  const a=$('#calAllName');a.textContent=S.cal.all?S.cal.all.name:'chưa chọn';a.className=S.cal.all?'ok':''}
+$('#calRows').onclick=e=>{const b=e.target.closest('[data-calbtn]');if(b)$(`#calRows [data-cal="${b.dataset.calbtn}"]`).click()};
+$('#calRows').onchange=e=>{const i=e.target.dataset.cal;if(i==null)return;if(e.target.files[0])S.cal.per[i]=e.target.files[0];else delete S.cal.per[i];renderCalBox()};
+$('#calAllBtn').onclick=()=>$('#calAll').click();
+$('#calAll').onchange=e=>{S.cal.all=e.target.files[0]||null;renderCalBox()};
+
+/* ---------- Tab dưới map: hành vi bất thường | heatmap ---------- */
+$('#mapTabs').onclick=e=>{const b=e.target.closest('[data-mt]');if(!b)return;S.mapTab=b.dataset.mt;$$('#mapTabs .tg').forEach(x=>x.classList.toggle('on',x===b))};
 
 /* ---------- Upload ---------- */
 function setFile(f){if(!f)return;S.file=f;$('#src').value=f.name;
@@ -547,8 +665,9 @@ $('#uploadBtn').onclick=()=>$('#file').click();
 $('#file').onchange=e=>{const fs=[...e.target.files];S.files=fs;CAMRES=[];CAMIDX=-1;renderCamTabs();
   if(fs.length>1){S.file=fs[0];$('#src').value=`${fs.length} video: ${fs.map(f=>f.name).join(', ')}`;S.videoURL=URL.createObjectURL(fs[0]);vid.src=S.videoURL;vid.hidden=false;$('#vmsg').hidden=true;
     resetData();S.srcName=`${fs.length} camera`;setStatus(`Đã chọn ${fs.length} video`);renderKpis();logLine(`Đã chọn ${fs.length} video: mỗi video chạy như một camera, kết quả hiện ở các tab CAM 1, CAM 2...`)}
-  else setFile(fs[0])};
-$('#src').oninput=()=>{S.file=null;S.files=[]};
+  else setFile(fs[0]);
+  S.cal.per={};renderCalBox()};
+$('#src').oninput=()=>{S.file=null;S.files=[];renderCalBox()};
 $('#runBtn').onclick=startAnalysis;
 $('#stopBtn').onclick=()=>{S.cancel=true;logLine('Đang dừng…')};
 
