@@ -1,0 +1,712 @@
+"""
+Generate training data for DynamicWeightNet from MOT-format sequences.
+
+Usage:
+  python -m yolox.DMA.generate_data \\
+    --seq-dirs datasets/mot/train \\
+    --out-dir datasets/mot17_dma \\
+    --fast-reid-config fast-reid/configs/MOT17/sbs_S50.yml \\
+    --reid-weights weights/osnet_x1_0.pth
+
+Pass --ltc-motion-ckpt to refine Kalman predictions with the same LTC/CfC
+residual model the tracker uses (yolox/tracker/ltc_motion.py), so motion_cost,
+mahalanobis_norm and cov_trace_log are generated under the same distribution
+seen at inference with --ltc-motion-ckpt. Use the same checkpoint and
+--ltc_* flags as the tracking run.
+
+Each output .npz contains:
+  features:         (N, FEAT_DIM)
+  labels:           (N,)   1 = correct match, 0 = wrong match
+  motion_costs:     (N,)
+  appearance_costs: (N,)
+
+MOT17 train/val_half split
+---------------------------
+YOLOX's detector training uses datasets/mot/annotations/train.json (full
+sequence, frames 1..N) and val_half.json (second half only, frames
+N//2+2..N) - see tools/*.py / datasets/mot/annotations. By default this
+script ignores that split and uses every frame of whatever --seq-dirs you
+pass in (equivalent to train.json's full-sequence range).
+
+Pass --mot17-half {train,val} to mirror that exact convention for MOT17
+sequences specifically (any seq dir whose name starts with "MOT17-"):
+  --mot17-half train  -> frames [1, N]        (full sequence, same as
+                                                 train.json - just makes intent
+                                                 explicit and gives a distinct
+                                                 output filename)
+  --mot17-half val    -> frames [N//2+2, N]   (second half only, same as
+                                                 val_half.json)
+Note this mirrors train.json/val_half.json's known leakage: train covers
+every frame val is evaluated on. If you want a DMA-specific train/val
+split with NO overlap instead, don't use --mot17-half at all - use
+DMADataset.split() (file-level split, see yolox/DMA/dataset.py) or point
+--val-data-dir at a separately generated held-out set.
+
+Non-MOT17 sequences (DanceTrack, SportsMOT, ...) are unaffected by this
+flag and are always processed in full - only MOT17 has an official
+train/val_half convention to mirror.
+
+  python -m yolox.DMA.generate_data \\
+    --seq-dirs datasets/mot/train \\
+    --out-dir datasets/mot17_dma_trainhalf \\
+    --mot17-half train ...
+  python -m yolox.DMA.generate_data \\
+    --seq-dirs datasets/mot/train \\
+    --out-dir datasets/mot17_dma_valhalf \\
+    --mot17-half val ...
+"""
+
+import argparse
+import os
+import sys
+from collections import defaultdict
+from pathlib import Path
+from typing import Optional, Tuple
+
+import numpy as np
+
+# Allow running as a standalone script from repo root
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from yolox.tracker.kalman_filter import KalmanFilter
+from yolox.tracker.ltc_motion import LtcMotionPredictor
+from yolox.DMA.features import extract_pair_features, extract_batch_features, FEAT_DIM
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Minimal track state — mirrors STrack but driven by GT associations
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _GTTrack:
+    """Lightweight track driven by ground-truth associations."""
+
+    _kf = KalmanFilter()
+    motion_history_len = 16
+
+    def __init__(self, gt_id: int, tlwh: np.ndarray, frame_id: int, feat=None,
+                 confidence: float = 1.0):
+        self.gt_id = gt_id
+        self.track_id = gt_id          # alias so feature extractor works
+        self.start_frame = frame_id
+        self.frame_id = frame_id
+        self.tracklet_len = 0
+
+        self._tlwh = np.asarray(tlwh, dtype=float)
+        xyah = self._tlwh_to_xyah(tlwh)
+        self.mean, self.covariance = self._kf.initiate(xyah)
+
+        # Motion history for LTC — same 12-dim layout as STrack in
+        # yolox/tracker/byte_tracker.py
+        from collections import deque
+        self.motion_history = deque(maxlen=_GTTrack.motion_history_len)
+        self.missing_count = 0
+        self._last_motion_frame = None
+        self._append_motion_history(frame_id, confidence, is_missing=False)
+
+        # Appearance
+        self.smooth_feat = None
+        self.curr_feat = None
+        from collections import deque
+        self.features = deque([], maxlen=50)
+        if feat is not None:
+            self._update_feat(feat)
+
+    # ── geometry helpers ─────────────────────────────────────────────────────
+    @staticmethod
+    def _tlwh_to_xyah(tlwh):
+        ret = np.asarray(tlwh, dtype=float).copy()
+        ret[:2] += ret[2:] / 2
+        ret[2] /= max(ret[3], 1e-6)
+        return ret
+
+    @property
+    def tlwh(self) -> np.ndarray:
+        ret = self.mean[:4].copy()
+        ret[2] *= ret[3]
+        ret[:2] -= ret[2:] / 2
+        return ret
+
+    @property
+    def tlbr(self) -> np.ndarray:
+        ret = self.tlwh.copy()
+        ret[2:] += ret[:2]
+        return ret
+
+    def to_xyah(self) -> np.ndarray:
+        return self._tlwh_to_xyah(self.tlwh)
+
+    # score is used by feature extractor
+    @property
+    def score(self) -> float:
+        return 1.0
+
+    # ── Kalman ───────────────────────────────────────────────────────────────
+    def predict(self):
+        mean_state = self.mean.copy()
+        self.mean, self.covariance = self._kf.predict(mean_state, self.covariance)
+
+    def update_kalman(self, tlwh: np.ndarray, frame_id: int, confidence: float = 1.0):
+        xyah = self._tlwh_to_xyah(tlwh)
+        self.mean, self.covariance = self._kf.update(self.mean, self.covariance, xyah)
+        self._append_motion_history(frame_id, confidence, is_missing=False)
+
+    # ── LTC motion history (mirrors STrack) ──────────────────────────────────
+    def append_missing_motion(self, frame_id: int):
+        if self._last_motion_frame == frame_id:
+            return
+        self.missing_count += 1
+        self._append_motion_history(frame_id, 0.0, is_missing=True)
+
+    def _append_motion_history(self, frame_id, confidence, is_missing):
+        delta_t = 1.0
+        if self._last_motion_frame is not None:
+            delta_t = max(1.0, float(frame_id - self._last_motion_frame))
+        if not is_missing:
+            self.missing_count = 0
+        feature = np.asarray(
+            [
+                *self.mean[:8],
+                delta_t,
+                1.0 if is_missing else 0.0,
+                float(self.missing_count),
+                float(confidence),
+            ],
+            dtype=np.float32,
+        )
+        self.motion_history.append(feature)
+        self._last_motion_frame = frame_id
+
+    # ── appearance ───────────────────────────────────────────────────────────
+    def _update_feat(self, feat: np.ndarray, alpha: float = 0.9):
+        feat = np.asarray(feat, dtype=np.float32)
+        norm = np.linalg.norm(feat)
+        if norm > 0:
+            feat = feat / norm
+        self.curr_feat = feat
+        self.features.append(feat)
+        if self.smooth_feat is None:
+            self.smooth_feat = feat.copy()
+        else:
+            self.smooth_feat = alpha * self.smooth_feat + (1 - alpha) * feat
+            sn = np.linalg.norm(self.smooth_feat)
+            if sn > 0:
+                self.smooth_feat /= sn
+
+
+class _GTDetection:
+    """Minimal detection wrapper so feature extractor can treat it like STrack."""
+
+    def __init__(self, tlwh: np.ndarray, score: float, gt_id: int, feat=None):
+        self._tlwh = np.asarray(tlwh, dtype=float)
+        self.score = score
+        self.gt_id = gt_id
+        self.tracklet_len = 0
+        self.start_frame = 0
+        self.frame_id = 0
+        self.mean = None          # not yet activated
+        self.covariance = None
+        from collections import deque
+        self.features = deque([], maxlen=50)
+        if feat is not None:
+            feat = np.asarray(feat, dtype=np.float32)
+            norm = np.linalg.norm(feat)
+            self.curr_feat = feat / norm if norm > 0 else feat
+        else:
+            self.curr_feat = None
+        self.smooth_feat = self.curr_feat
+
+    @property
+    def tlwh(self) -> np.ndarray:
+        return self._tlwh.copy()
+
+    @property
+    def tlbr(self) -> np.ndarray:
+        ret = self._tlwh.copy()
+        ret[2:] += ret[:2]
+        return ret
+
+    def to_xyah(self) -> np.ndarray:
+        ret = self._tlwh.copy()
+        ret[:2] += ret[2:] / 2
+        ret[2] /= max(ret[3], 1e-6)
+        return ret
+
+
+def _det_score_for(detections, gt_id: int) -> float:
+    """Score of the detection matched to gt_id (1.0 if the GT box had none)."""
+    for det in detections:
+        if det.gt_id == gt_id:
+            return float(det.score)
+    return 1.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GT / detection file readers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _load_gt(gt_file: str):
+    """
+    Returns dict: frame_id -> list of (gt_id, tlwh, conf, cls, vis).
+    Filters to class=1 (pedestrian) and visible detections.
+    """
+    gt = defaultdict(list)
+    with open(gt_file) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(",")
+            fid = int(parts[0])
+            tid = int(parts[1])
+            x, y, w, h = float(parts[2]), float(parts[3]), float(parts[4]), float(parts[5])
+            conf = float(parts[6]) if len(parts) > 6 else 1.0
+            cls = int(float(parts[7])) if len(parts) > 7 else 1
+            vis = float(parts[8]) if len(parts) > 8 else 1.0
+            if cls != 1 or conf < 0.5 or vis < 0.1:
+                continue
+            gt[fid].append((tid, np.array([x, y, w, h], dtype=np.float32), conf))
+    return gt
+
+
+def _load_detections(det_file: str):
+    """
+    Returns dict: frame_id -> list of (tlwh, score).
+    Standard MOT det.txt: frame, -1, x, y, w, h, score, -1, -1, -1
+    """
+    dets = defaultdict(list)
+    with open(det_file) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(",")
+            fid = int(parts[0])
+            x, y, w, h = float(parts[2]), float(parts[3]), float(parts[4]), float(parts[5])
+            score = float(parts[6]) if len(parts) > 6 else 1.0
+            if score < 0.3:
+                continue
+            dets[fid].append((np.array([x, y, w, h], dtype=np.float32), score))
+    return dets
+
+
+def _match_dets_to_gt(det_tlwhs, gt_entries, iou_thresh=0.5):
+    """
+    Greedy IoU matching of detections to GT boxes.
+    Returns list of gt_id (or -1) per detection.
+    """
+    if not gt_entries or not det_tlwhs:
+        return [-1] * len(det_tlwhs)
+
+    gt_tlwhs = [e[1] for e in gt_entries]
+    gt_ids = [e[0] for e in gt_entries]
+
+    def tlwh_to_tlbr(tlwh):
+        ret = tlwh.copy()
+        ret[2:] += ret[:2]
+        return ret
+
+    assigned = [-1] * len(det_tlwhs)
+    used_gt = set()
+    # compute IoU matrix
+    n_d, n_g = len(det_tlwhs), len(gt_tlwhs)
+    iou_mat = np.zeros((n_d, n_g), dtype=np.float32)
+    for i, dtlwh in enumerate(det_tlwhs):
+        da = tlwh_to_tlbr(dtlwh)
+        for j, gtlwh in enumerate(gt_tlwhs):
+            ga = tlwh_to_tlbr(gtlwh)
+            ix1, iy1 = max(da[0], ga[0]), max(da[1], ga[1])
+            ix2, iy2 = min(da[2], ga[2]), min(da[3], ga[3])
+            inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+            union = (
+                (da[2]-da[0])*(da[3]-da[1])
+                + (ga[2]-ga[0])*(ga[3]-ga[1])
+                - inter
+            )
+            iou_mat[i, j] = inter / max(union, 1e-6)
+
+    # greedy assignment
+    pairs = sorted(
+        [(i, j) for i in range(n_d) for j in range(n_g)],
+        key=lambda ij: -iou_mat[ij[0], ij[1]]
+    )
+    assigned_d = set()
+    for i, j in pairs:
+        if iou_mat[i, j] < iou_thresh:
+            break
+        if i in assigned_d or j in used_gt:
+            continue
+        assigned[i] = gt_ids[j]
+        assigned_d.add(i)
+        used_gt.add(j)
+    return assigned
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ReID feature extractor (optional)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_reid(args):
+    if not args.reid_weights:
+        return None
+    try:
+        import argparse as _ap
+        fast_reid_config = getattr(args, "fast_reid_config", None)
+        if fast_reid_config:
+            reid_args = _ap.Namespace(
+                reid_backend="fast",
+                fast_reid_config=fast_reid_config,
+                fast_reid_weights=args.reid_weights,
+                reid_model_path=args.reid_weights,
+                reid_device="cuda",
+                fast_reid_batch_size=16,
+            )
+        else:
+            reid_args = _ap.Namespace(
+                reid_backend="deep",
+                reid_model=args.reid_model,
+                reid_model_path=args.reid_weights,
+                reid_device="cuda",
+            )
+        from yolox.tracker.reid import build_reid_extractor
+        extractor = build_reid_extractor(reid_args)
+        print(f"[ReID] Loaded: {args.reid_weights}")
+        return extractor
+    except Exception as e:
+        print(f"[WARN] ReID not available: {e}")
+        return None
+
+
+def _extract_feats(reid, frame_path: str, tlwhs):
+    if reid is None or not tlwhs:
+        return [None] * len(tlwhs)
+    import cv2
+    frame = cv2.imread(frame_path)
+    if frame is None:
+        return [None] * len(tlwhs)
+    tlbrs = []
+    for tlwh in tlwhs:
+        x, y, w, h = tlwh
+        tlbrs.append([x, y, x + w, y + h])
+    return reid.extract(frame, tlbrs)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MOT17 train/val_half frame-range split (mirrors datasets/mot/annotations/
+# train.json + val_half.json - see module docstring)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _read_seq_length(seq_dir: Path) -> int:
+    """Total frame count of a MOT-format sequence, from seqinfo.ini."""
+    ini_path = seq_dir / "seqinfo.ini"
+    if ini_path.exists():
+        for line in ini_path.read_text().splitlines():
+            line = line.strip()
+            if line.lower().startswith("seqlength"):
+                try:
+                    return int(line.split("=", 1)[1].strip())
+                except (IndexError, ValueError):
+                    break
+    img_dir = seq_dir / "img1"
+    if img_dir.exists():
+        n = len([p for p in img_dir.iterdir() if p.suffix.lower() in (".jpg", ".png")])
+        if n:
+            return n
+    return 0
+
+
+def _mot17_half_range(seq_dir: Path, half: str) -> Optional[Tuple[int, int]]:
+    """
+    (lo, hi) inclusive frame range for MOT17 --mot17-half {train,val}.
+
+    Mirrors datasets/mot/annotations/train.json + val_half.json exactly,
+    leakage included: train.json is the FULL sequence (1..N), not a
+    "first half" - YOLOX/ByteTrack train the detector on everything and
+    only use val_half.json (second half, N//2+2..N) as a tracking-side
+    sanity eval. So --mot17-half train here is just the full sequence
+    (same frames --mot17-half val is a subset of); it exists mainly so
+    the intent is explicit in the command line and so its output file
+    gets a distinct "_half_train" suffix instead of colliding with an
+    un-suffixed full-sequence run in the same --out-dir.
+    """
+    n = _read_seq_length(seq_dir)
+    if n <= 0:
+        return None
+    mid = n // 2
+    if half == "train":
+        return 1, n
+    if half == "firsthalf":
+        return 1, mid + 1
+    return mid + 2, n
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main generation loop
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _predict_tracks(tracks, ltc: Optional[LtcMotionPredictor]):
+    """Kalman predict every track, then apply the LTC residual if enabled."""
+    for trk in tracks:
+        trk.predict()
+    if ltc is None or not ltc.enabled or not tracks:
+        return
+    means = np.stack([trk.mean for trk in tracks])
+    covs = np.stack([trk.covariance for trk in tracks])
+    means, covs = ltc.refine(tracks, means, covs)
+    for trk, mean, cov in zip(tracks, means, covs):
+        trk.mean, trk.covariance = mean, cov
+
+
+def generate_sequence(seq_dir: str, out_path: str, args, ltc=None) -> int:
+    seq_dir = Path(seq_dir)
+    gt_file = seq_dir / "gt" / "gt.txt"
+    img_dir = seq_dir / "img1"
+
+    if not gt_file.exists():
+        print(f"[SKIP] No GT file at {gt_file}")
+        return 0
+
+    gt = _load_gt(str(gt_file))
+    all_frames = sorted(gt.keys())
+
+    if args.mot17_half and seq_dir.name.startswith("MOT17-"):
+        frame_range = _mot17_half_range(seq_dir, args.mot17_half)
+        if frame_range is None:
+            print(f"[WARN] {seq_dir.name}: could not determine seqLength, "
+                  f"--mot17-half ignored (using full sequence)")
+        else:
+            lo, hi = frame_range
+            all_frames = [f for f in all_frames if lo <= f <= hi]
+            print(f"  [{seq_dir.name}] mot17-half={args.mot17_half}: "
+                  f"frames {lo}-{hi} ({len(all_frames)} with GT)")
+
+    # Detections: either from det.txt or fall back to GT boxes
+    det_file = seq_dir / "det" / "det.txt"
+    if not args.use_gt_dets and det_file.exists():
+        dets_by_frame = _load_detections(str(det_file))
+        use_gt_as_det = False
+    else:
+        use_gt_as_det = True
+        dets_by_frame = None
+
+    reid = _build_reid(args)
+    kf = KalmanFilter()
+
+    # Active GT tracks: gt_id -> _GTTrack
+    active_tracks: dict = {}
+
+    all_features, all_labels, all_m_costs, all_a_costs = [], [], [], []
+
+    for frame_id in all_frames:
+        gt_this_frame = gt.get(frame_id, [])
+        gt_id_to_tlwh = {e[0]: e[1] for e in gt_this_frame}
+
+        # ── Build detections for this frame ──────────────────────────────
+        # Try common naming conventions: 8-digit (DanceTrack), 6-digit (MOT17)
+        for fmt, ext in [("%08d.jpg", ""), ("%06d.jpg", ""), ("%08d.png", ""), ("%06d.png", "")]:
+            frame_path = str(img_dir / (fmt % frame_id))
+            if os.path.exists(frame_path):
+                break
+        else:
+            frame_path = ""
+
+        if use_gt_as_det:
+            det_tlwhs = [e[1] for e in gt_this_frame]
+            det_scores = [e[2] for e in gt_this_frame]
+            det_gt_ids = [e[0] for e in gt_this_frame]
+        else:
+            raw_dets = dets_by_frame.get(frame_id, [])
+            det_tlwhs = [d[0] for d in raw_dets]
+            det_scores = [d[1] for d in raw_dets]
+            det_gt_ids = _match_dets_to_gt(det_tlwhs, gt_this_frame)
+
+        # Extract ReID features for detections
+        det_feats = _extract_feats(reid, frame_path, det_tlwhs)
+
+        # Build detection objects
+        detections = [
+            _GTDetection(tlwh, score, gid, feat)
+            for tlwh, score, gid, feat in zip(
+                det_tlwhs, det_scores, det_gt_ids, det_feats
+            )
+        ]
+
+        # ── Predict existing tracks ──────────────────────────────────────
+        _predict_tracks(list(active_tracks.values()), ltc)
+
+        if len(active_tracks) == 0 or len(detections) == 0:
+            # Update tracks with GT observations then continue
+            for gt_id, tlwh in gt_id_to_tlwh.items():
+                conf = _det_score_for(detections, gt_id)
+                if gt_id in active_tracks:
+                    t = active_tracks[gt_id]
+                    t.update_kalman(tlwh, frame_id, conf)
+                    t.frame_id = frame_id
+                    t.tracklet_len += 1
+                else:
+                    feats_for_trk = [
+                        det_feats[k]
+                        for k, d in enumerate(detections)
+                        if d.gt_id == gt_id
+                    ]
+                    f = feats_for_trk[0] if feats_for_trk else None
+                    active_tracks[gt_id] = _GTTrack(gt_id, tlwh, frame_id, feat=f,
+                                                    confidence=conf)
+            for gt_id, trk in active_tracks.items():
+                if gt_id not in gt_id_to_tlwh:
+                    trk.append_missing_motion(frame_id)
+            continue
+
+        # ── Generate (track, detection) pairs ───────────────────────────
+        track_list = list(active_tracks.values())
+        feat_matrix = extract_batch_features(track_list, detections, kf, frame_id)
+        # feat_matrix: (n_tracks, n_dets, FEAT_DIM)
+
+        for i, trk in enumerate(track_list):
+            for j, det in enumerate(detections):
+                label = float(trk.gt_id == det.gt_id and det.gt_id != -1)
+                feat_vec = feat_matrix[i, j]
+                all_features.append(feat_vec)
+                all_labels.append(label)
+                all_m_costs.append(feat_vec[0])   # motion_cost = FEAT_NAMES[0]
+                all_a_costs.append(feat_vec[3])   # cosine_dist  = FEAT_NAMES[3]
+
+        # ── Update active tracks with GT associations ─────────────────────
+        seen_ids = set()
+        for gt_id, tlwh in gt_id_to_tlwh.items():
+            seen_ids.add(gt_id)
+            # find matching detection feat
+            det_feat = None
+            for k, det in enumerate(detections):
+                if det.gt_id == gt_id:
+                    det_feat = det_feats[k]
+                    break
+            conf = _det_score_for(detections, gt_id)
+            if gt_id in active_tracks:
+                t = active_tracks[gt_id]
+                t.update_kalman(tlwh, frame_id, conf)
+                t.frame_id = frame_id
+                t.tracklet_len += 1
+                if det_feat is not None:
+                    t._update_feat(det_feat)
+            else:
+                active_tracks[gt_id] = _GTTrack(gt_id, tlwh, frame_id, feat=det_feat,
+                                                confidence=conf)
+
+        for gt_id, trk in active_tracks.items():
+            if gt_id not in seen_ids:
+                trk.append_missing_motion(frame_id)
+
+        # Remove tracks not seen for > max_age frames
+        to_remove = [
+            gt_id for gt_id, trk in active_tracks.items()
+            if frame_id - trk.frame_id > args.max_age
+        ]
+        for gt_id in to_remove:
+            del active_tracks[gt_id]
+
+    if not all_features:
+        return 0
+
+    np.savez_compressed(
+        out_path,
+        features=np.stack(all_features).astype(np.float32),
+        labels=np.array(all_labels, dtype=np.float32),
+        motion_costs=np.array(all_m_costs, dtype=np.float32),
+        appearance_costs=np.array(all_a_costs, dtype=np.float32),
+    )
+    n = len(all_labels)
+    pos = int(sum(all_labels))
+    print(f"  {Path(seq_dir).name}: {n} pairs  pos={pos}  neg={n-pos}")
+    return n
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--seq-dirs", nargs="+", required=True)
+    parser.add_argument("--out-dir", required=True)
+    parser.add_argument("--reid-model", default="osnet_x1_0")
+    parser.add_argument("--reid-weights", default="")
+    parser.add_argument("--fast-reid-config", default=None,
+                        help="FastReID config .yml (use instead of --reid-model for fast_reid backend)")
+    parser.add_argument("--use-gt-dets", action="store_true",
+                        help="Use GT boxes as detections instead of det.txt")
+    parser.add_argument("--max-age", type=int, default=30,
+                        help="Max frames to keep a lost GT track alive")
+    parser.add_argument("--mot17-detector", choices=["DPM", "FRCNN", "SDP"], default="SDP",
+                        help="Detector split to use for MOT17 sequences (default: SDP)")
+    parser.add_argument("--mot17-half", choices=["train", "val", "firsthalf"], default=None,
+                        help="Restrict MOT17 sequences (name starts with 'MOT17-') to match "
+                             "datasets/mot/annotations/train.json (--mot17-half train = full "
+                             "sequence, frames 1..N) or val_half.json (--mot17-half val = second "
+                             "half only, frames N//2+2..N) exactly, leakage included. Pass "
+                             "--mot17-half firsthalf for frames 1..N//2+1 only - the complement "
+                             "of val_half.json, with NO frame overlap, for leakage-free DMA "
+                             "training data. Non-MOT17 sequences are always processed in full, "
+                             "regardless of this flag.")
+    parser.add_argument("--ltc-motion-ckpt", dest="ltc_motion_ckpt", default=None,
+                        help="LTC/CfC motion residual checkpoint; refines Kalman predictions "
+                             "like the tracker does with --ltc-motion-ckpt")
+    parser.add_argument("--ltc_min_history", type=int, default=16,
+                        help="minimum history length before applying LTC")
+    parser.add_argument("--ltc_device", type=str, default=None,
+                        help="device for LTC motion model (default: cuda if available)")
+    parser.add_argument("--ltc_covariance_scale", type=float, default=1.0,
+                        help="scale for LTC log_var covariance inflation")
+    parser.add_argument("--ltc_max_abs_residual", type=float, default=256.0,
+                        help="clip LTC residual magnitude")
+    args = parser.parse_args()
+
+    ltc = None
+    if args.ltc_motion_ckpt:
+        ltc = LtcMotionPredictor(args)
+        _GTTrack.motion_history_len = ltc.history_len
+        print(f"[LTC] Loaded checkpoint: {args.ltc_motion_ckpt} | "
+              f"history_len={ltc.history_len} | min_history={ltc.min_history}")
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Expand any directory that has no gt/gt.txt but contains sub-sequences
+    seq_dirs = []
+    for d in args.seq_dirs:
+        d = Path(d)
+        if (d / "gt" / "gt.txt").exists():
+            seq_dirs.append(d)
+        else:
+            children = sorted(p for p in d.iterdir() if p.is_dir() and (p / "gt" / "gt.txt").exists())
+            if children:
+                seq_dirs.extend(children)
+            else:
+                print(f"[WARN] No sequences found in {d}")
+
+    if args.mot17_detector:
+        before = len(seq_dirs)
+        seq_dirs = [
+            seq_dir for seq_dir in seq_dirs
+            if not seq_dir.name.startswith("MOT17-")
+            or seq_dir.name.rsplit("-", 1)[-1].upper() == args.mot17_detector
+        ]
+        skipped = before - len(seq_dirs)
+        if skipped:
+            print(f"[INFO] MOT17 detector filter: kept {args.mot17_detector}, skipped {skipped} sequences")
+
+    if not seq_dirs:
+        raise FileNotFoundError("No sequences found")
+
+    total = 0
+    for seq_dir in seq_dirs:
+        seq_name = seq_dir.name
+        suffix = f"_half_{args.mot17_half}" if args.mot17_half and seq_name.startswith("MOT17-") else ""
+        out_path = out_dir / f"{seq_name}{suffix}.npz"
+        print(f"Processing {seq_name} ...")
+        n = generate_sequence(str(seq_dir), str(out_path), args, ltc=ltc)
+        total += n
+
+    print(f"\nDone. Total pairs: {total}")
+    print(f"Files saved to: {out_dir}")
+
+
+if __name__ == "__main__":
+    main()

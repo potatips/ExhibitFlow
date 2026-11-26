@@ -1,0 +1,544 @@
+import numpy as np
+from collections import deque
+import os
+import os.path as osp
+import copy
+import torch
+import torch.nn.functional as F
+
+from .kalman_filter import KalmanFilter
+from .ltc_motion import LtcMotionPredictor
+from .reid import build_reid_extractor
+from .xlstm_motion import XlstmMotionPredictor
+from yolox.tracker import matching
+from .basetrack import BaseTrack, TrackState
+
+DEFAULT_XLSTM_HISTORY_LEN = 16
+
+try:
+    from yolox.DMA import DMAFusion
+    _DMA_AVAILABLE = True
+except ImportError:
+    _DMA_AVAILABLE = False
+
+class STrack(BaseTrack):
+    shared_kalman = KalmanFilter()
+    motion_history_len = DEFAULT_XLSTM_HISTORY_LEN
+    def __init__(self, tlwh, score, feat=None, alpha=0.9):
+
+        # wait activate
+        self._tlwh = np.asarray(tlwh, dtype=float)
+        self.kalman_filter = None
+        self.mean, self.covariance = None, None
+        self.is_activated = False
+
+        self.score = score
+        self.tracklet_len = 0
+        self.alpha = alpha
+        self.curr_feat = None
+        self.smooth_feat = None
+        self.features = deque([], maxlen=50)
+        self.motion_history = deque(maxlen=STrack.motion_history_len)
+        self.missing_count = 0
+        self._last_motion_frame = None
+        if feat is not None:
+            self.update_features(feat)
+
+    def update_features(self, feat):
+        feat = np.asarray(feat, dtype=np.float32)
+        norm = np.linalg.norm(feat)
+        if norm > 0:
+            feat = feat / norm
+        self.curr_feat = feat
+        if self.smooth_feat is None:
+            self.smooth_feat = feat
+        else:
+            self.smooth_feat = self.alpha * self.smooth_feat + (1 - self.alpha) * feat
+            smooth_norm = np.linalg.norm(self.smooth_feat)
+            if smooth_norm > 0:
+                self.smooth_feat = self.smooth_feat / smooth_norm
+        self.features.append(feat)
+
+    def predict(self):
+        mean_state = self.mean.copy()
+        if self.state != TrackState.Tracked:
+            mean_state[7] = 0
+        self.mean, self.covariance = self.kalman_filter.predict(mean_state, self.covariance)
+
+    @staticmethod
+    def multi_predict(stracks, motion_predictor=None, profiler=None):
+        if len(stracks) > 0:
+            if profiler is not None:
+                profiler.start("kalman_predict")
+            multi_mean = np.asarray([st.mean.copy() for st in stracks])
+            multi_covariance = np.asarray([st.covariance for st in stracks])
+            for i, st in enumerate(stracks):
+                if st.state != TrackState.Tracked:
+                    multi_mean[i][7] = 0
+            multi_mean, multi_covariance = STrack.shared_kalman.multi_predict(multi_mean, multi_covariance)
+            if profiler is not None:
+                profiler.stop("kalman_predict")
+            if motion_predictor is not None:
+                if profiler is not None:
+                    profiler.start("ltc_predict")
+                multi_mean, multi_covariance = motion_predictor.refine(
+                    stracks, multi_mean, multi_covariance
+                )
+                if profiler is not None:
+                    profiler.stop("ltc_predict")
+            for i, (mean, cov) in enumerate(zip(multi_mean, multi_covariance)):
+                stracks[i].mean = mean
+                stracks[i].covariance = cov
+
+    def activate(self, kalman_filter, frame_id):
+        """Start a new tracklet"""
+        self.kalman_filter = kalman_filter
+        self.track_id = self.next_id()
+        self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xyah(self._tlwh))
+
+        self.tracklet_len = 0
+        self.state = TrackState.Tracked
+        if frame_id == 1:
+            self.is_activated = True
+        # self.is_activated = True
+        self.frame_id = frame_id
+        self.start_frame = frame_id
+        self._append_motion_history(frame_id, self.score, is_missing=False)
+
+    def re_activate(self, new_track, frame_id, new_id=False):
+        self.mean, self.covariance = self.kalman_filter.update(
+            self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
+        )
+        if new_track.curr_feat is not None:
+            self.update_features(new_track.curr_feat)
+        self.tracklet_len = 0
+        self.state = TrackState.Tracked
+        self.is_activated = True
+        self.frame_id = frame_id
+        if new_id:
+            self.track_id = self.next_id()
+        self.score = new_track.score
+        self._append_motion_history(frame_id, self.score, is_missing=False)
+
+    def update(self, new_track, frame_id):
+        """
+        Update a matched track
+        :type new_track: STrack
+        :type frame_id: int
+        :type update_feature: bool
+        :return:
+        """
+        self.frame_id = frame_id
+        self.tracklet_len += 1
+
+        new_tlwh = new_track.tlwh
+        self.mean, self.covariance = self.kalman_filter.update(
+            self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh))
+        if new_track.curr_feat is not None:
+            self.update_features(new_track.curr_feat)
+        self.state = TrackState.Tracked
+        self.is_activated = True
+
+        self.score = new_track.score
+        self._append_motion_history(frame_id, self.score, is_missing=False)
+
+    def append_missing_motion(self, frame_id):
+        if self.mean is None or self._last_motion_frame == frame_id:
+            return
+        self.missing_count += 1
+        self._append_motion_history(frame_id, 0.0, is_missing=True)
+
+    def _append_motion_history(self, frame_id, confidence, is_missing):
+        if self.mean is None:
+            return
+        delta_t = 1.0
+        if self._last_motion_frame is not None:
+            delta_t = max(1.0, float(frame_id - self._last_motion_frame))
+        if not is_missing:
+            self.missing_count = 0
+        feature = np.asarray(
+            [
+                self.mean[0],
+                self.mean[1],
+                self.mean[2],
+                self.mean[3],
+                self.mean[4],
+                self.mean[5],
+                self.mean[6],
+                self.mean[7],
+                delta_t,
+                1.0 if is_missing else 0.0,
+                float(self.missing_count),
+                float(confidence),
+            ],
+            dtype=np.float32,
+        )
+        self.motion_history.append(feature)
+        self._last_motion_frame = frame_id
+
+    @property
+    # @jit(nopython=True)
+    def tlwh(self):
+        """Get current position in bounding box format `(top left x, top left y,
+                width, height)`.
+        """
+        if self.mean is None:
+            return self._tlwh.copy()
+        ret = self.mean[:4].copy()
+        ret[2] *= ret[3]
+        ret[:2] -= ret[2:] / 2
+        return ret
+
+    @property
+    # @jit(nopython=True)
+    def tlbr(self):
+        """Convert bounding box to format `(min x, min y, max x, max y)`, i.e.,
+        `(top left, bottom right)`.
+        """
+        ret = self.tlwh.copy()
+        ret[2:] += ret[:2]
+        return ret
+
+    @staticmethod
+    # @jit(nopython=True)
+    def tlwh_to_xyah(tlwh):
+        """Convert bounding box to format `(center x, center y, aspect ratio,
+        height)`, where the aspect ratio is `width / height`.
+        """
+        ret = np.asarray(tlwh).copy()
+        ret[:2] += ret[2:] / 2
+        ret[2] /= ret[3]
+        return ret
+
+    def to_xyah(self):
+        return self.tlwh_to_xyah(self.tlwh)
+
+    @staticmethod
+    # @jit(nopython=True)
+    def tlbr_to_tlwh(tlbr):
+        ret = np.asarray(tlbr).copy()
+        ret[2:] -= ret[:2]
+        return ret
+
+    @staticmethod
+    # @jit(nopython=True)
+    def tlwh_to_tlbr(tlwh):
+        ret = np.asarray(tlwh).copy()
+        ret[2:] += ret[:2]
+        return ret
+
+    def __repr__(self):
+        return 'OT_{}_({}-{})'.format(self.track_id, self.start_frame, self.end_frame)
+
+
+class BYTETracker(object):
+    def __init__(self, args, frame_rate=30):
+        self.tracked_stracks = []  # type: list[STrack]
+        self.lost_stracks = []  # type: list[STrack]
+        self.removed_stracks = []  # type: list[STrack]
+
+        self.frame_id = 0
+        self.args = args
+        #self.det_thresh = args.track_thresh
+        self.det_thresh = args.track_thresh + 0.1
+        self.buffer_size = int(frame_rate / 30.0 * args.track_buffer)
+        self.max_time_lost = self.buffer_size
+        self.kalman_filter = KalmanFilter()
+        STrack.motion_history_len = max(
+            int(getattr(args, "xlstm_history_len", DEFAULT_XLSTM_HISTORY_LEN)),
+            int(getattr(args, "ltc_history_len", DEFAULT_XLSTM_HISTORY_LEN)),
+        )
+        ltc_motion_ckpt = getattr(args, "ltc_motion_ckpt", None)
+        # Optional per-stage timer (set by MOTEvaluator when --profile-timing is on).
+        self.profiler = None
+        if ltc_motion_ckpt:
+            self.motion_predictor = LtcMotionPredictor(args)
+            # The checkpoint may carry a longer history than the CLI default; the
+            # per-track deque must be at least that long or the LTC input is silently
+            # zero-padded. No-op for checkpoints whose history_len <= the CLI value.
+            STrack.motion_history_len = max(STrack.motion_history_len, int(self.motion_predictor.history_len))
+            print(
+                "[LTC] Loaded checkpoint: {} | history_len={} | min_history={}".format(
+                    ltc_motion_ckpt,
+                    self.motion_predictor.history_len,
+                    self.motion_predictor.min_history,
+                )
+            )
+        else:
+            self.motion_predictor = XlstmMotionPredictor(args)
+            print("[LTC] Disabled | no ltc_motion_ckpt provided")
+        self.with_reid = getattr(args, "with_reid", False)
+        self.reid_weight = getattr(args, "reid_weight", 0.35)
+        self.reid_thresh = getattr(args, "reid_thresh", 0.7)
+        self.reid_alpha = getattr(args, "reid_alpha", 0.9)
+        self.reid_extractor = None
+        if self.with_reid:
+            self.reid_extractor = build_reid_extractor(args)
+            print(f"[ReID] Loaded | weight={self.reid_weight:.2f} | thresh={self.reid_thresh:.2f} | alpha={self.reid_alpha:.2f}")
+
+        # DMA: dynamic motion-appearance fusion
+        # --ml selects a classical ML backend (e.g. LightGBM) in place of
+        # DynamicWeightNet; when set it takes priority and --dma-weights is ignored.
+        self.dma = None
+        ml_backend = getattr(args, "ml", None)
+        if ml_backend:
+            ml_weights = getattr(args, "ml_weights", None)
+            if not ml_weights:
+                raise ValueError("--ml requires --ml-weights <path_to_ml_weight>")
+            if not _DMA_AVAILABLE:
+                raise RuntimeError("--ml requested but yolox.DMA could not be imported")
+            device = getattr(args, "dma_device", "cpu")
+            self.dma = DMAFusion.from_checkpoint(ml_weights, device=device)
+            print(f"[DMA] Using ML backend '{ml_backend}' | checkpoint: {ml_weights}")
+        else:
+            dma_weights = getattr(args, "dma_weights", None)
+            if _DMA_AVAILABLE and dma_weights:
+                device = getattr(args, "dma_device", "cpu")
+                self.dma = DMAFusion.from_checkpoint(dma_weights, device=device)
+                print(f"[DMA] Loaded checkpoint: {dma_weights}")
+        # Ablation: --dma-mask-features zeroes named features (normalised = training mean).
+        # Empty/unset (default) leaves the DMA inputs untouched.
+        if self.dma is not None:
+            mask = getattr(args, "dma_mask_features", None)
+            if isinstance(mask, str):
+                mask = [m.strip() for m in mask.split(",") if m.strip()]
+            if mask:
+                print(f"[DMA] Masking features (set to train mean): {self.dma.set_mask_features(mask)}")
+
+    def _extract_reid_features(self, frame, tlbrs):
+        if not self.with_reid or self.reid_extractor is None or frame is None or len(tlbrs) == 0:
+            return [None] * len(tlbrs)
+        features = self.reid_extractor.extract(frame, tlbrs)
+        return [feat for feat in features]
+
+    def _make_detections(self, tlbrs, scores, features):
+        return [
+            STrack(STrack.tlbr_to_tlwh(tlbr), score, feat, alpha=self.reid_alpha)
+            for tlbr, score, feat in zip(tlbrs, scores, features)
+        ]
+
+    def _fuse_reid(self, iou_dists, tracks, detections):
+        if not self.with_reid or iou_dists.size == 0:
+            return iou_dists
+        track_mask = np.array([t.smooth_feat is not None for t in tracks])
+        det_mask = np.array([d.curr_feat is not None for d in detections])
+        if not track_mask.any() or not det_mask.any():
+            return iou_dists
+        emb_dists = matching.embedding_distance(tracks, detections)
+        emb_dists[emb_dists > self.reid_thresh] = 1.0
+
+        if self.dma is not None:
+            prof = self.profiler
+            if prof is not None:
+                prof.start("dma_total")
+            fused = self.dma.fuse(
+                tracks, detections,
+                iou_dists, emb_dists,
+                self.kalman_filter, self.frame_id,
+                profiler=prof,
+            )
+            if prof is not None:
+                prof.stop("dma_total")
+            result = iou_dists.copy()
+            rows = np.where(track_mask)[0]
+            cols = np.where(det_mask)[0]
+            result[np.ix_(rows, cols)] = fused[np.ix_(rows, cols)]
+            return result
+
+        fused = (1 - self.reid_weight) * iou_dists + self.reid_weight * emb_dists
+        result = iou_dists.copy()
+        rows = np.where(track_mask)[0]
+        cols = np.where(det_mask)[0]
+        result[np.ix_(rows, cols)] = fused[np.ix_(rows, cols)]
+        return result
+
+    def update(self, output_results, img_info, img_size, frame=None):
+        prof = self.profiler
+        if prof is not None:
+            prof.start("tracker_total")
+        self.frame_id += 1
+        activated_starcks = []
+        refind_stracks = []
+        lost_stracks = []
+        removed_stracks = []
+
+        if output_results.shape[1] == 5:
+            scores = output_results[:, 4]
+            bboxes = output_results[:, :4]
+        else:
+            output_results = output_results.cpu().numpy()
+            scores = output_results[:, 4] * output_results[:, 5]
+            bboxes = output_results[:, :4]  # x1y1x2y2
+        img_h, img_w = img_info[0], img_info[1]
+        scale = min(img_size[0] / float(img_h), img_size[1] / float(img_w))
+        bboxes /= scale
+
+        remain_inds = scores > self.args.track_thresh
+        inds_low = scores > 0.1
+        inds_high = scores < self.args.track_thresh
+
+        inds_second = np.logical_and(inds_low, inds_high)
+        dets_second = bboxes[inds_second]
+        dets = bboxes[remain_inds]
+        scores_keep = scores[remain_inds]
+        scores_second = scores[inds_second]
+        if prof is not None:
+            prof.start("reid_extract")
+        features_keep = self._extract_reid_features(frame, dets)
+        features_second = self._extract_reid_features(frame, dets_second)
+        if prof is not None:
+            prof.stop("reid_extract")
+
+        if len(dets) > 0:
+            '''Detections'''
+            detections = self._make_detections(dets, scores_keep, features_keep)
+        else:
+            detections = []
+
+        ''' Add newly detected tracklets to tracked_stracks'''
+        unconfirmed = []
+        tracked_stracks = []  # type: list[STrack]
+        for track in self.tracked_stracks:
+            if not track.is_activated:
+                unconfirmed.append(track)
+            else:
+                tracked_stracks.append(track)
+
+        ''' Step 2: First association, with high score detection boxes'''
+        strack_pool = joint_stracks(tracked_stracks, self.lost_stracks)
+        # Predict the current location with KF
+        STrack.multi_predict(strack_pool, self.motion_predictor, profiler=prof)
+        dists = matching.iou_distance(strack_pool, detections)
+        dists = self._fuse_reid(dists, strack_pool, detections)
+        if not self.args.mot20:
+            dists = matching.fuse_score(dists, detections)
+        matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.args.match_thresh)
+
+        for itracked, idet in matches:
+            track = strack_pool[itracked]
+            det = detections[idet]
+            if track.state == TrackState.Tracked:
+                track.update(detections[idet], self.frame_id)
+                activated_starcks.append(track)
+            else:
+                track.re_activate(det, self.frame_id, new_id=False)
+                refind_stracks.append(track)
+
+        ''' Step 3: Second association, with low score detection boxes'''
+        # association the untrack to the low score detections
+        if len(dets_second) > 0:
+            '''Detections'''
+            detections_second = self._make_detections(dets_second, scores_second, features_second)
+        else:
+            detections_second = []
+        r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
+        dists = matching.iou_distance(r_tracked_stracks, detections_second)
+        # dists = self._fuse_reid(dists, strack_pool, detections)
+        # if not self.args.mot20:
+        #     dists = matching.fuse_score(dists, detections)
+        matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
+        for itracked, idet in matches:
+            track = r_tracked_stracks[itracked]
+            det = detections_second[idet]
+            if track.state == TrackState.Tracked:
+                track.update(det, self.frame_id)
+                activated_starcks.append(track)
+            else:
+                track.re_activate(det, self.frame_id, new_id=False)
+                refind_stracks.append(track)
+
+        for it in u_track:
+            track = r_tracked_stracks[it]
+            if not track.state == TrackState.Lost:
+                track.append_missing_motion(self.frame_id)
+                track.mark_lost()
+                lost_stracks.append(track)
+
+        for track in strack_pool:
+            if track.state == TrackState.Lost:
+                track.append_missing_motion(self.frame_id)
+
+        '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
+        detections = [detections[i] for i in u_detection]
+        dists = matching.iou_distance(unconfirmed, detections)
+        if not self.args.mot20:
+            dists = matching.fuse_score(dists, detections)
+        matches, u_unconfirmed, u_detection = matching.linear_assignment(dists, thresh=0.7)
+        for itracked, idet in matches:
+            unconfirmed[itracked].update(detections[idet], self.frame_id)
+            activated_starcks.append(unconfirmed[itracked])
+        for it in u_unconfirmed:
+            track = unconfirmed[it]
+            track.mark_removed()
+            removed_stracks.append(track)
+
+        """ Step 4: Init new stracks"""
+        for inew in u_detection:
+            track = detections[inew]
+            if track.score < self.det_thresh:
+                continue
+            track.activate(self.kalman_filter, self.frame_id)
+            activated_starcks.append(track)
+        """ Step 5: Update state"""
+        for track in self.lost_stracks:
+            if self.frame_id - track.end_frame > self.max_time_lost:
+                track.mark_removed()
+                removed_stracks.append(track)
+
+        # print('Ramained match {} s'.format(t4-t3))
+
+        self.tracked_stracks = [t for t in self.tracked_stracks if t.state == TrackState.Tracked]
+        self.tracked_stracks = joint_stracks(self.tracked_stracks, activated_starcks)
+        self.tracked_stracks = joint_stracks(self.tracked_stracks, refind_stracks)
+        self.lost_stracks = sub_stracks(self.lost_stracks, self.tracked_stracks)
+        self.lost_stracks.extend(lost_stracks)
+        self.lost_stracks = sub_stracks(self.lost_stracks, self.removed_stracks)
+        self.removed_stracks.extend(removed_stracks)
+        self.tracked_stracks, self.lost_stracks = remove_duplicate_stracks(self.tracked_stracks, self.lost_stracks)
+        # get scores of lost tracks
+        output_stracks = [track for track in self.tracked_stracks if track.is_activated]
+        if prof is not None:
+            prof.stop("tracker_total")
+
+        return output_stracks
+
+
+def joint_stracks(tlista, tlistb):
+    exists = {}
+    res = []
+    for t in tlista:
+        exists[t.track_id] = 1
+        res.append(t)
+    for t in tlistb:
+        tid = t.track_id
+        if not exists.get(tid, 0):
+            exists[tid] = 1
+            res.append(t)
+    return res
+
+
+def sub_stracks(tlista, tlistb):
+    stracks = {}
+    for t in tlista:
+        stracks[t.track_id] = t
+    for t in tlistb:
+        tid = t.track_id
+        if stracks.get(tid, 0):
+            del stracks[tid]
+    return list(stracks.values())
+
+
+def remove_duplicate_stracks(stracksa, stracksb):
+    pdist = matching.iou_distance(stracksa, stracksb)
+    pairs = np.where(pdist < 0.15)
+    dupa, dupb = list(), list()
+    for p, q in zip(*pairs):
+        timep = stracksa[p].frame_id - stracksa[p].start_frame
+        timeq = stracksb[q].frame_id - stracksb[q].start_frame
+        if timep > timeq:
+            dupb.append(q)
+        else:
+            dupa.append(p)
+    resa = [t for i, t in enumerate(stracksa) if not i in dupa]
+    resb = [t for i, t in enumerate(stracksb) if not i in dupb]
+    return resa, resb

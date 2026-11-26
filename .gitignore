@@ -3,7 +3,6 @@ build-tensorrt/
 cmake-build-*/
 data/
 !task_w1/data/
-external/
 outputs/
 .venv/
 __pycache__/
@@ -37,3 +36,8 @@ pretrained
 # Makefile (Vast.ai): trạng thái cài đặt, log, dữ liệu dashboard
 .make/
 /dashboard_data/
+
+# external/ = phần cần thiết của 2 repo ngoài, đã gộp vào repo (make không phải clone)
+external/**/__pycache__/
+external/**/*.pyc
+external/**/*.so

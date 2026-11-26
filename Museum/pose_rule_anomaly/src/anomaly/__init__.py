@@ -1,1 +1,0 @@
-"""Normal-only anomaly baselines."""
