@@ -60,7 +60,8 @@
         <div class="srcrow">
           <div class="srcvar" id="srcFile">
             <input id="src" class="txt" type="text" placeholder="Đường dẫn file / thư mục (trên server) hoặc URL video (.mp4 ...)" spellcheck="false">
-            <input type="file" id="file" accept="video/*" hidden>
+            <select id="siteSel" class="txt" hidden title="Địa điểm đã hiệu chuẩn: ghép các video thành một map chung"></select>
+            <input type="file" id="file" accept="video/*" multiple hidden>
             <button class="btn" id="uploadBtn">Upload</button>
           </div>
           <div class="srcvar" id="srcCam" hidden>
@@ -77,7 +78,11 @@
           <input type="file" id="multiFile" accept="video/*" hidden>
         </div>
         <div class="srcmsg" id="srcmsg"></div>
-        <div class="vbar"><div class="live grn" id="live" hidden></div><div class="rthud" id="rthud" hidden></div></div>
+        <div class="calbox" id="calBox" hidden>
+          <div class="calhd"><b>Hiệu chuẩn camera</b></div>
+          <div class="calrows" id="calRows"></div>
+          <div class="calrow" id="calAllRow"><span>Một file chung cho tất cả camera</span><input type="file" id="calAll" accept=".json,application/json" hidden><button class="btn sm" id="calAllBtn" type="button">Chọn file</button><em id="calAllName">chưa chọn</em></div>        </div>
+        <div class="vbar"><div class="camtabs" id="camTabs" hidden></div><div class="live grn" id="live" hidden></div><div class="rthud" id="rthud" hidden></div></div>
         <div class="stage-wrap">
           <video id="vid" playsinline muted hidden></video>
           <img id="liveimg" alt="" hidden>
@@ -109,11 +114,22 @@
           <canvas id="map"></canvas>
           <div class="mapnote" id="mapNote" hidden>Chưa có dữ liệu bản đồ 2D cho kết quả này.</div>
         </div>
+        <div class="mapfoot">
+          <div class="filters" id="mapTabs">
+            <button class="tg on" data-mt="events">Hành vi</button>
+            <button class="tg" data-mt="heat">Heatmap</button>
+            <button class="tg" data-mt="bottleneck">Cổ chai</button>
+            <button class="tg" data-mt="flow">Luồng đi</button>
+            <button class="tg" data-mt="deadzone">Vùng chết</button>
+          </div>
+          <div class="filters" id="heatModes" hidden title="Chọn chỉ số hiển thị trên heatmap"><button class="tg on" data-hm="presence">Mật độ</button><button class="tg" data-hm="visitors">Lượt khách</button><button class="tg" data-hm="dwell">Dừng chân</button></div>
+          <span class="vstat" id="mapInfo"></span>
+        </div>
         <div class="ctrl">
           <div class="legend" style="margin:0">
             <span style="--c:var(--ok)">Người</span><span style="--c:var(--touch)">Đang chạm</span><span style="--c:var(--steal)">Cảnh báo</span><span style="--c:var(--art)">Hiện vật</span>
           </div>
-          <div class="tog" id="mlayers"><button class="tg on" data-m="trails">Vệt đi</button><button class="tg on" data-m="zones">Vùng gần</button><button class="tg" data-m="heat">Heatmap</button></div>
+          <div class="tog" id="mlayers"><button class="tg on" data-m="trails">Vệt đi</button><button class="tg on" data-m="zones">Vùng gần</button><button class="tg" data-m="heat">Heatmap</button><button class="tg" data-m="all">Mọi người</button></div>
         </div>
       </div>
     </div>
@@ -133,6 +149,44 @@
       <div class="rings" id="rings"></div>
     </div>
   </div>
+
+  <!-- ============ PHÂN TÍCH KHÔNG GIAN & HÀNH VI KHÁCH (ẨN DANH) ============ -->
+  <section class="an-sec" id="analyticsSec">
+    <div class="an-head">
+      <h2>Phân tích Không gian &amp; Hành vi Khách <small id="anMeta">Chưa có dữ liệu quỹ đạo</small></h2>
+      <div class="an-actions">
+        <span class="an-priv" title="Chỉ dùng quỹ đạo ẩn danh (tốc độ, dừng chân, vùng phủ), không nhận diện khuôn mặt">Ẩn danh · Không nhận diện khuôn mặt</span>
+        <button class="btn sm" id="anExportBtn" disabled>Xuất JSON</button>
+      </div>
+    </div>
+    <div class="an-grid">
+      <div class="card">
+        <h3>Ma trận Sức hút Hiện vật <span class="sp"></span><span class="vstat" id="anAttrTag">Attraction vs. Holding</span></h3>
+        <div class="an-canvas-wrap"><canvas id="anMatrix"></canvas></div>
+        <div class="an-list" id="anAttrList"><p class="note empty">Chạy phân tích video để tính Attraction Power &amp; Holding Power.</p></div>
+      </div>
+      <div class="card">
+        <h3>Phân nhóm Hành vi Khách (Verón &amp; Levasseur) <span class="sp"></span><span class="vstat" id="anArchTag">0 khách</span></h3>
+        <div class="an-arch" id="anArchetypes"><p class="note empty">Chưa có dữ liệu khách tham quan.</p></div>
+      </div>
+      <div class="card">
+        <h3>Điểm mỏi Bảo tàng &amp; Tỷ lệ Bỏ qua <span class="sp"></span><span class="vstat" id="anFatigueTag">Q1 → Q4</span></h3>
+        <div class="an-banner" id="anFatigueBadge"></div>
+        <div class="an-canvas-wrap sm"><canvas id="anFatigueChart"></canvas></div>
+        <div class="an-trans" id="anTransitions"></div>
+      </div>
+      <div class="card">
+        <h3>Khai thác Không gian &amp; Nút thắt Cổ chai <span class="sp"></span>
+          <div class="an-jump">
+            <button class="btn sm" type="button" data-mapjump="bottleneck">Xem Cổ chai</button>
+            <button class="btn sm" type="button" data-mapjump="deadzone">Xem Vùng chết</button>
+          </div>
+        </h3>
+        <div class="an-mini-kpis" id="anSpaceKpis"></div>
+        <div class="an-list" id="anBottleneckList"><p class="note empty">Chưa có dữ liệu không gian &amp; cổ chai.</p></div>
+      </div>
+    </div>
+  </section>
 </section>
 
 <!-- ============ SETTINGS ============ -->
@@ -190,6 +244,8 @@
 
 <script src="js/config.js"></script>
 <script src="js/hex.js"></script>
+<script src="js/heatmap.js"></script>
+<script src="js/museum_analytics.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

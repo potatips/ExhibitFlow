@@ -49,6 +49,7 @@ os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')   #
 
 PROJ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJ))
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # site_runner.py cùng thư mục
 
 import uvicorn  # noqa: E402
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect  # noqa: E402
@@ -61,8 +62,23 @@ from exhibitflow import cam_worker  # noqa: E402
 from exhibitflow import multicam  # noqa: E402
 from exhibitflow import source as efsource  # noqa: E402
 from exhibitflow import tuning as _tuning  # noqa: E402
+import site_events  # noqa: E402
+import site_runner  # noqa: E402
 
 ALLOWED = {'.mp4', '.avi', '.mov', '.mkv', '.webm'}
+
+
+def sniff_ext(head):
+    """Đoán đuôi video từ vài chục byte đầu (khi tên file / đường dẫn không có đuôi). Trả None nếu không giống video."""
+    if len(head) >= 12 and head[4:8] == b'ftyp':
+        return '.mov' if head[8:12] == b'qt  ' else '.mp4'
+    if head[:4] == bytes.fromhex('1a45dfa3'):
+        return '.mkv'                              # Matroska / WebM
+    if head[:4] == b'RIFF' and head[8:12] == b'AVI ':
+        return '.avi'
+    return None
+
+
 MAX_BYTES = int(os.environ.get('EXHIBITFLOW_MAX_MB', '600')) * 1024 * 1024
 STAGES = ['Khởi động & nạp model', 'Tách hiện vật', 'Nạp VLM', 'Phân tích video', 'Ghi kết quả']
 SOURCE_ROOTS = [Path(p).resolve() for p in (os.environ.get('EXHIBITFLOW_SOURCE_ROOTS')
@@ -79,11 +95,38 @@ NW = 960
 def pipe_of(opts):
     """Cấu hình pipeline lấy từ options của request (chỉ các khoá trong PIPE_OPTS)."""
     return {k: t(opts[k]) for k, t in PIPE_OPTS.items() if opts.get(k) is not None}                                   # web vẽ hộp hiện vật theo khung rộng 960 px
+MAKE_MAP = os.environ.get('EXHIBITFLOW_MAKE_MAP', '1') != '0'   # tạo map 2D từ video (multicam-2d-floorplan-tracker), mất ~15-25 s/video
+
+
+def parse_det_conf(v):
+    """Ngưỡng phát hiện người từ web: số trong [0.001, 0.99], không hợp lệ thì None (giữ mặc định)."""
+    try:
+        c = float(v)
+    except (TypeError, ValueError):
+        return None
+    return c if 0.001 <= c <= 0.99 else None
+
+
+def apply_det_conf(runner, conf):
+    """Đặt ngưỡng cho detector đang nạp. YOLOX đọc `self.conf` ở mỗi lần detect, nên có hiệu lực ngay, không phải nạp lại model."""
+    if conf is None:
+        return False
+    det = getattr(getattr(getattr(runner, 'engine', None), 'M', None), 'detector', None)
+    if det is None:
+        return False
+    if hasattr(det, 'conf'):
+        det.conf = float(conf)
+    elif isinstance(getattr(det, 'kw', None), dict):
+        det.kw['conf'] = float(conf)                  # detector kiểu ultralytics
+    else:
+        return False
+    return True
 
 
 def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
     state = State(data_dir)
     runner = (DemoRunner if demo else PipelineRunner)(state, local=local)
+    web_cfg = dict(det_conf=parse_det_conf(os.environ.get('EXHIBITFLOW_DET_CONF')))   # ngưỡng phát hiện người (None = giữ mặc định 0.01 của engine)
     if mode:
         state.save_settings(dict(pipeline_mode=mode))
     # mặc định bật khi khởi động (preload nạp model đúng cấu hình ngay, không phải nạp lại ở lần chạy đầu); web gửi lại mỗi lần chạy
@@ -96,9 +139,22 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
 
         def _run_video_with_live(*a, **k):
             svc.RT['render_live'] = True
+            if apply_det_conf(runner, web_cfg.get('det_conf')):
+                state.log(f"Ngưỡng phát hiện người (detector conf) = {web_cfg['det_conf']}")
             return _orig_run_video(*a, **k)
 
         svc.run_video = _run_video_with_live
+
+        # engine vẽ 3 dòng thông số (frame / FPS / VLM queue) vào live.mp4: bỏ chúng đi, giữ nguyên khung người, ID và nhãn
+        import exhibitflow.engine as eng_mod
+        _orig_put_label = eng_mod.put_label
+
+        def _put_label_no_hud(img, text, *a, **k):
+            if isinstance(text, str) and text.startswith(('frame ', 'pipeline ', 'VLM queue')):
+                return None
+            return _orig_put_label(img, text, *a, **k)
+
+        eng_mod.put_label = _put_label_no_hud
     if preload:
         runner.preload()                   # nạp model một lần ngay khi server lên
 
@@ -115,10 +171,15 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
 
     async def save_upload(video):
         """Ghi file upload vào thư mục uploads -> (đường dẫn, tên gốc)."""
-        ext = Path(video.filename).suffix.lower()
+        ext, head = Path(video.filename).suffix.lower(), b''
+        if ext not in ALLOWED:                 # tên file không có đuôi (hoặc đuôi lạ): xem nội dung
+            head = await video.read(1 << 16)
+            ext = sniff_ext(head) or ext
         check_ext(ext)
         vpath, size = uploads / f'{uuid.uuid4().hex[:8]}{ext}', 0
         with open(vpath, 'wb') as f:
+            f.write(head)
+            size = len(head)
             while chunk := await video.read(1 << 20):
                 size += len(chunk)
                 if size > MAX_BYTES:
@@ -164,7 +225,11 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
             p = vids[0]
         if not p.is_file():
             raise HTTPException(404, f'Không thấy file {p}')
-        check_ext(p.suffix.lower())
+        ext = p.suffix.lower()
+        if ext not in ALLOWED:                     # đường dẫn không có đuôi: xem nội dung file
+            with open(p, 'rb') as fh:
+                ext = sniff_ext(fh.read(64)) or ext
+        check_ext(ext)
         return p, p.name
 
     def video_info(path):
@@ -264,7 +329,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
     def health():
         with state.lock:
             ms = state.models_state
-        return {'ok': True, 'version': 'ef-web-1', 'demo': demo, 'models': ms, 'jobs': len(jobs)}
+        return {'ok': True, 'version': 'ef-web-1', 'demo': demo, 'models': ms, 'jobs': len(jobs), 'det_conf': web_cfg['det_conf']}
 
     @app.get('/api/state')
     def get_state():
@@ -335,6 +400,32 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
             pass
         return out
 
+    def demo_map():
+        """--demo: tạo ảnh map lưới giả để thử khối Map 2D (pipeline thật tạo map bằng multicam-2d-floorplan-tracker)."""
+        import cv2
+        import numpy as np
+        real = os.environ.get('EXHIBITFLOW_DEMO_MAP')           # tuỳ chọn: nạp ảnh map có sẵn (vd map do mapgen tạo) để thử giao diện
+        if real and Path(real).is_file():
+            out = state.root / 'maps' / 'demo'
+            out.mkdir(parents=True, exist_ok=True)
+            shutil.copy(real, out / 'map.png')
+            with state.lock:
+                state.map_path = out / 'map.png'
+                state.map_version += 1
+            return
+        img = np.full((600, 800, 3), (34, 30, 26), np.uint8)
+        for x in range(0, 800, 50):
+            cv2.line(img, (x, 0), (x, 600), (52, 46, 40), 1)
+        for y in range(0, 600, 50):
+            cv2.line(img, (0, y), (800, y), (52, 46, 40), 1)
+        cv2.rectangle(img, (20, 20), (780, 580), (170, 165, 160), 3)
+        out = state.root / 'maps' / 'demo'
+        out.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(out / 'map.png'), img)
+        with state.lock:
+            state.map_path = out / 'map.png'
+            state.map_version += 1
+
     # ------------------------------------------------------------------ job
     @app.post('/api/jobs')
     async def create_job(video: UploadFile | None = File(None), options: str = Form('{}'), source: str = Form('')):
@@ -368,7 +459,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         if efsource.is_stream(vpath):             # camera: thời lượng tối đa (phút) + không giả lập realtime
             from exhibitflow import settings as efs
             efs.RT['stream_max_sec'] = max(10.0, float(opts.get('camera_max_min') or 30) * 60)
-        state.save_settings(dict(pipe, realtime=realtime))
+        state.save_settings(dict(pipe, realtime=realtime, make_map=MAKE_MAP, map_image='auto'))
         try:
             runner.start(str(vpath))
         except RuntimeError as e:
@@ -377,6 +468,8 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         jobs[jid] = dict(id=jid, path=Path(vpath), name=name, t0=time.time(), cancelled=False, final=None, rdir=None,
                          realtime=realtime, vinfo=video_info(vpath))
         cur['id'] = jid
+        if demo:
+            demo_map()
         return jid
 
     # ------------------------------------------------------------------ multi-camera (chạy tuần tự, xem exhibitflow/multicam.py)
@@ -686,6 +779,275 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         if efsource.is_stream(j['path']) or not j['path'].is_file():
             raise HTTPException(404, 'Không còn video')
         return FileResponse(j['path'])
+
+    # ------------------------------------------------------------------ nhiều camera đã hiệu chuẩn (hồ sơ địa điểm)
+    site_jobs = {}
+    SITE_MAX_SECONDS = float(os.environ.get('EXHIBITFLOW_SITE_MAX_SECONDS', '30'))     # cắt tối đa N giây đầu của mỗi video
+    SITE_STAGES = ['Cắt khung đã khử méo', 'Phát hiện người + ghép các camera', 'Hoàn tất']
+    SITE_STAGES_EV = ['Cắt khung đã khử méo', 'Phát hiện người + ghép các camera', 'Phát hiện hành vi bất thường (từng camera)',
+                      'Chiếu hành vi bất thường lên map', 'Hoàn tất']
+    # chạy engine của Hưng trên từng camera để lấy hành vi bất thường (cần model + GPU); --demo không có nên tắt
+    app_flags = dict(site_events=(not demo) and os.environ.get('EXHIBITFLOW_SITE_EVENTS', '1') != '0')
+
+    def analyze_video(job, path):
+        """Chạy engine (State + PipelineRunner của Hưng) trên MỘT video, trả timeline.json (hộp người theo khung + cảnh báo)."""
+        end = time.time() + 900
+        while runner.loading() and time.time() < end:
+            time.sleep(1)
+        if runner.running():
+            raise RuntimeError('Engine đang chạy video khác')
+        info = video_info(path)
+        t_start = time.time()
+        state.save_settings(dict(realtime=False, make_map=False, map_image='auto', max_frames=int(SITE_MAX_SECONDS * info['fps'])))
+        runner.start(str(path))
+        while runner.running():
+            time.sleep(0.5)
+        with state.lock:
+            st, msg, rid = state.status, state.message, getattr(state, 'run_id', None)
+        tl = (state.root / 'runs' / str(rid) / 'timeline.json') if rid else None
+        if st != 'done' or tl is None or not tl.is_file() or tl.stat().st_mtime < t_start - 1:
+            raise RuntimeError(msg or 'Engine không trả kết quả cho video này')
+        out = json.loads(tl.read_text(encoding='utf-8'))
+        try:
+            out['_run'] = json.loads((tl.parent / 'run.json').read_text(encoding='utf-8'))
+        except Exception:                                  # noqa: BLE001
+            pass
+        return out
+
+    app.state.analyze_video = analyze_video            # thay được khi kiểm thử (không cần GPU)
+    app.state.web_cfg, app.state.runner = web_cfg, runner
+    app.state.site_events = app_flags['site_events']
+
+    def site_device():
+        dev = os.environ.get('EXHIBITFLOW_SITE_DEVICE')
+        if dev:
+            return dev
+        try:
+            import torch
+            return 'cuda:0' if torch.cuda.is_available() else 'cpu'
+        except Exception:                                  # noqa: BLE001
+            return 'cpu'
+
+    def site_events_stage(job, site):
+        """Engine trên từng camera -> hành vi bất thường theo toạ độ ảnh -> sàn (mét) -> gộp các camera -> ghi vào site_result.json.
+        Lỗi ở đây KHÔNG làm hỏng bản đồ ghép: kết quả vẫn trả, kèm `events_error`."""
+        rpath = job['out'] / 'site_result.json'
+        result = json.loads(rpath.read_text(encoding='utf-8'))
+        cam_events, errors, seen = [], [], []
+        job['stage'] = 2
+        try:
+            for cam, path in job['videos'].items():
+                job['log'].append(f'[events] {site["cameras"][cam].get("label", cam)}: phân tích hành vi bất thường...')
+                try:
+                    tl = app.state.analyze_video(job, path)
+                    spec = site_events.fit_to_video(site['cameras'][cam], int(tl['width']), int(tl['height']))
+                    H = next((c.get('H') for c in result.get('cameras', []) if c.get('id') == cam), None)
+                    # có ma trận chiếu của repo map: dùng nó (cùng hệ toạ độ với ảnh mặt bằng); không thì tự tính từ K, R, t
+                    mapper = site_events.homography_mapper(H, spec['K'], spec.get('dist')) if H else site_events.floor_mapper(spec)
+                    cam_events += site_events.engine_events(tl, mapper, cam)
+                    seen.append(dict(cam=cam, **site_events.engine_summary(tl, tl.get('_run'))))
+                except Exception as e:                      # noqa: BLE001
+                    errors.append(f'{cam}: {type(e).__name__}: {e}')
+                    job['log'].append(f'[events] {cam} lỗi: {e}')
+        finally:
+            if not demo:
+                state.save_settings(dict(max_frames=0))     # trả lại cài đặt, không cắt video của lượt phân tích sau
+        job['stage'] = 3
+        result['events'] = site_events.build_incidents(cam_events, result.get('frames', []))
+        result['engine'] = seen
+        result['events_error'] = '; '.join(errors) or None
+        rpath.write_text(json.dumps(result, separators=(',', ':')), encoding='utf-8')
+
+    def site_worker(job):
+        try:
+            site = job.get('site_def') or site_runner.load_site(job['site'])
+            repo = site_runner.find_repo()
+            if repo is None:
+                raise RuntimeError('Không thấy repo multicam-2d-floorplan-tracker (đặt FLOORPLAN_DIR).')
+            job['stage'] = 0
+            work = state.root / 'sites' / job['id']
+            data_dir, n = site_runner.prepare_dataset(site, job['videos'], work / 'data', seconds=SITE_MAX_SECONDS, log=job['log'].append)
+            job['stage'], job['n'] = 1, n
+            out = site_runner.run_repo(repo, data_dir, work / 'out', n, site['room_id'], device=site_device(), log=job['log'].append)
+            if not (out / 'site_result.json').is_file():
+                raise RuntimeError('Pipeline map2d không tạo ra site_result.json')
+            job['out'] = out
+            if job['events']:
+                site_events_stage(job, site)
+            job['stage'], job['status'] = len(job['stages']) - 1, 'done'
+        except BaseException as e:                         # noqa: BLE001
+            job['status'], job['error'] = 'error', f'{type(e).__name__}: {e}'
+            try:
+                print('[site] LỖI: ' + job['error'], flush=True)
+            except UnicodeError:                           # console Windows không in được tiếng Việt
+                print('[site] ERROR: ' + job['error'].encode('ascii', 'replace').decode(), flush=True)
+
+    @app.get('/api/sites')
+    def sites():
+        return list(site_runner.list_sites().values())
+
+    async def save_video(up, dst_base, label):
+        ext, head = Path(up.filename).suffix.lower(), b''
+        if ext not in ALLOWED:
+            head = await up.read(1 << 16)
+            ext = sniff_ext(head) or ext
+        check_ext(ext)
+        dst, size = Path(f'{dst_base}{ext}'), 0
+        with open(dst, 'wb') as f:
+            f.write(head)
+            size = len(head)
+            while chunk := await up.read(1 << 20):
+                size += len(chunk)
+                if size > MAX_BYTES:
+                    f.close()
+                    dst.unlink(missing_ok=True)
+                    raise HTTPException(413, f'Video {label} quá lớn (tối đa {MAX_BYTES >> 20} MB)')
+                f.write(chunk)
+        return dst
+
+    def cam_match(cid, k, label, filename):
+        """Id camera trong file hiệu chuẩn khớp với video: trùng khoá / nhãn, hoặc nằm trong tên file (camera_A ~ camera_A_cctv.mp4)."""
+        if not cid:
+            return False
+        c = cid.lower()
+        return c in (k.lower(), label.lower()) or (len(c) >= 3 and c in Path(filename).stem.lower())
+
+    async def read_json_field(v, label):
+        if v is None:
+            return None
+        text = (await v.read()).decode('utf-8-sig', errors='replace') if hasattr(v, 'read') else str(v)
+        if not text.strip():
+            return None
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            raise HTTPException(400, f'{label}: file hiệu chuẩn không phải JSON hợp lệ ({e.msg}, dòng {e.lineno})')
+
+    @app.post('/api/site-jobs')
+    async def create_site_job(request: Request):
+        """Hai kiểu form.
+        1) Địa điểm có sẵn: site=<id>; mỗi camera một tệp video, tên trường = id camera (C1, C2...).
+        2) Hiệu chuẩn tự nhập: site=__custom__; mỗi camera: cam_<k> (video), calib_<k> (JSON K,R,t), label_<k> (tên hiển thị);
+           hoặc calib_all = một JSON chứa cả các camera (kiểu transforms.json). events=0 để bỏ bước hành vi bất thường."""
+        form = await request.form()
+        sid = str(form.get('site') or '')
+        custom = sid == '__custom__'
+        if not custom:
+            try:
+                site = site_runner.load_site(sid)
+            except FileNotFoundError as e:
+                raise HTTPException(404, str(e))
+        if site_runner.find_repo() is None:
+            raise HTTPException(501, 'Chưa cài repo multicam-2d-floorplan-tracker trên server.')
+        if any(j['status'] == 'running' for j in site_jobs.values()) or runner.running():
+            raise HTTPException(409, 'Server đang phân tích video khác, đợi xong hoặc bấm Dừng.')
+        jid = uuid.uuid4().hex[:12]
+        videos = {}
+        if custom:
+            keys = [k[4:] for k in form.keys() if k.startswith('cam_') and getattr(form.get(k), 'filename', None)]
+            if not keys:
+                raise HTTPException(400, 'Cần ít nhất một video (trường cam_<k>)')
+            allcal = await read_json_field(form.get('calib_all'), 'Hiệu chuẩn chung')
+            pool = site_events.split_calibration(allcal) if allcal is not None else []
+            cams, missing = {}, []
+            room_bounds = site_events.room_bounds_from(allcal)
+            for pos, k in enumerate(keys):
+                up = form.get(f'cam_{k}')
+                label = str(form.get(f'label_{k}') or up.filename)
+                raw = await read_json_field(form.get(f'calib_{k}'), f'Camera {label}')
+                if raw is not None:
+                    room_bounds = room_bounds or site_events.room_bounds_from(raw)
+                    items = site_events.split_calibration(raw)
+                    raw = next((c for cid, c in items if cam_match(cid, k, label, up.filename)), items[0][1])
+                elif pool:
+                    raw = next((c for cid, c in pool if cam_match(cid, k, label, up.filename)), pool[pos][1] if pos < len(pool) else None)
+                if raw is None:
+                    missing.append(label)
+                    continue
+                try:
+                    cams[f'C{pos + 1}'] = site_events.normalize_calibration(raw, label)
+                except site_events.CalibrationError as e:
+                    raise HTTPException(400, str(e))
+                cams[f'C{pos + 1}']['label'] = label
+                videos[f'C{pos + 1}'] = await save_video(up, uploads / f'{jid}_C{pos + 1}', label)
+            if missing:
+                for v in videos.values():
+                    v.unlink(missing_ok=True)
+                raise HTTPException(400, 'Thiếu hiệu chuẩn cho: ' + ', '.join(missing))
+            site = dict(site_id='custom', name='Hiệu chuẩn tự nhập', room_id='custom', sample_fps=4.0, cameras=cams, room_bounds=room_bounds)
+        else:
+            for cam in site['cameras']:
+                up = form.get(cam)
+                if up is None or not getattr(up, 'filename', None):
+                    continue
+                videos[cam] = await save_video(up, uploads / f'{jid}_{cam}', cam)
+            if len(videos) < 1:
+                raise HTTPException(400, 'Cần ít nhất một video, đặt tên trường theo id camera: ' + ', '.join(site['cameras']))
+        ev = bool(app.state.site_events) and str(form.get('events', '1')) != '0'
+        job = dict(id=jid, site=sid, site_def=site if custom else None, videos=videos, status='running', stage=0, error=None, log=[], out=None,
+                   n=0, t0=time.time(), events=ev, stages=SITE_STAGES_EV if ev else SITE_STAGES)
+        site_jobs[jid] = job
+        threading.Thread(target=site_worker, args=(job,), daemon=True, name='site-job').start()
+        return {'job_id': jid, 'cameras': list(videos), 'events': ev}
+
+    def get_site_job(jid):
+        j = site_jobs.get(jid)
+        if j is None:
+            raise HTTPException(404, 'Không có job này')
+        return j
+
+    @app.get('/api/site-jobs/{jid}')
+    def site_job_status(jid: str):
+        j = get_site_job(jid)
+        return dict(status=j['status'], stage=j['stage'], stages=j['stages'], error=j['error'], cameras=list(j['videos']),
+                    log=[l for l in j['log'][-8:]], elapsed=round(time.time() - j['t0']))
+
+    @app.get('/api/site-jobs/{jid}/result')
+    def site_job_result(jid: str):
+        j = get_site_job(jid)
+        if j['status'] != 'done':
+            raise HTTPException(409, 'Job chưa xong')
+        return FileResponse(j['out'] / 'site_result.json', media_type='application/json')
+
+    @app.get('/api/site-jobs/{jid}/map')
+    def site_job_map(jid: str):
+        j = get_site_job(jid)
+        p = Path(j['out']) / 'global_2d_map.png' if j.get('out') else None
+        if p is None or not p.is_file():
+            raise HTTPException(404, 'Không có ảnh mặt bằng (đang dùng đường dự phòng, không có map của repo)')
+        return FileResponse(p, media_type='image/png', headers={'Cache-Control': 'no-store'})
+
+    @app.get('/api/site-jobs/{jid}/video/{cam}')
+    def site_job_video(jid: str, cam: str):
+        j = get_site_job(jid)
+        p = j['videos'].get(cam)
+        if p is None or not Path(p).is_file():
+            raise HTTPException(404, 'Không có video camera này')
+        return FileResponse(p)
+
+    # ------------------------------------------------------------------ Map 2D (multicam-2d-floorplan-tracker)
+    @app.get('/api/jobs/{jid}/map')
+    def map_image(jid: str):
+        get_job(jid)
+        with state.lock:
+            p = state.map_path
+        if p is None or not Path(p).is_file():
+            raise HTTPException(404, 'Chưa có map')
+        return FileResponse(p, media_type='image/png', headers={'Cache-Control': 'no-store'})
+
+    @app.get('/api/jobs/{jid}/map/data')
+    def map_data(jid: str, full: int = 0):
+        """Vị trí người / hiện vật trên map (toạ độ 0-1 của ảnh map). full=1 (khi xong): kèm vị trí theo từng khung để phát lại."""
+        j = get_job(jid)
+        vfps = j['vinfo']['fps'] or 25.0
+        with state.lock:
+            has = state.map_path is not None and Path(state.map_path).is_file()
+            out = dict(has_map=has, version=state.map_version, fps=vfps,
+                       people=[dict(id=p['id'], x=round(p['x'], 4), y=round(p['y'], 4), state=p.get('state', 'idle')) for p in state.people],
+                       artifacts=[dict(id=a['id'], x=round(a['x'], 4), y=round(a['y'], 4)) for a in state.artifacts])
+            if full and finished(j):
+                out['frames'] = {int(k): [[q[0], q[1], q[2]] for q in v[1]] for k, v in state.timeline.items() if v[1]}
+        return out
 
     @app.get('/api/jobs/{jid}/files/{path:path}')
     def get_file(jid: str, path: str):
