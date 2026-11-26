@@ -35,6 +35,8 @@ export EF_WEIGHTS_DIR := $(PIPE)/weights
 export EXHIBITFLOW_WORK := $(WORK)/work
 export PYTORCH_CUDA_ALLOC_CONF := expandable_segments:True
 
+TRACKER_URL := https://github.com/khangkaka066/ByteTrack-DMA-LTC-Motion-Tracker.git
+MAP_URL     := https://github.com/potatips/multicam-2d-floorplan-tracker.git
 
 .PHONY: vast run setup deps externals weights llama mapmodels check url logs status stop restart clean help
 
@@ -56,10 +58,11 @@ $(STAMP)/deps:
 	$(PY) -m pip install -U "brotli>=1.2"
 	@touch $@
 
-# external/ đã nằm sẵn trong repo (phần cần thiết của ByteTrack-DMA-LTC-Motion-Tracker và multicam-2d-floorplan-tracker): chỉ kiểm tra
-externals:
-	@test -d $(EXT)/ByteTrack-DMA-LTC-Motion-Tracker/yolox && test -d $(EXT)/multicam-2d-floorplan-tracker/src \
-	  || { echo "[externals] thiếu external/ - clone lại repo đầy đủ"; exit 1; }
+externals: $(EXT)/ByteTrack-DMA-LTC-Motion-Tracker $(EXT)/multicam-2d-floorplan-tracker
+$(EXT)/ByteTrack-DMA-LTC-Motion-Tracker:
+	git clone --depth 1 $(TRACKER_URL) $@
+$(EXT)/multicam-2d-floorplan-tracker:
+	git clone --depth 1 $(MAP_URL) $@
 
 weights: deps
 	$(PY) $(PIPE)/scripts/fetch_weights.py $(PIPE)/weights $(HF_REPO)

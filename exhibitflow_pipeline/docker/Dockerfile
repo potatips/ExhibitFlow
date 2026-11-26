@@ -21,7 +21,10 @@ RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp /tmp/llama.cpp \
 ARG BRANCH=Hung
 ARG REPO_REF=0
 WORKDIR /opt/ExhibitFlow
-RUN git clone --depth 1 --branch ${BRANCH} https://github.com/khangkaka066/ExhibitFlow.git .
+RUN git clone --depth 1 --branch ${BRANCH} https://github.com/khangkaka066/ExhibitFlow.git . \
+    && mkdir -p external \
+    && git clone --depth 1 https://github.com/khangkaka066/ByteTrack-DMA-LTC-Motion-Tracker.git external/ByteTrack-DMA-LTC-Motion-Tracker \
+    && git clone --depth 1 https://github.com/potatips/multicam-2d-floorplan-tracker.git external/multicam-2d-floorplan-tracker
 
 WORKDIR /opt/ExhibitFlow/exhibitflow_pipeline
 # fastapi/uvicorn/psutil cho dashboard; install_deps.py xử lý xung đột onnxruntime / onnxruntime-gpu

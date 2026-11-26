@@ -37,7 +37,6 @@ pretrained
 .make/
 /dashboard_data/
 
-# external/ = phần cần thiết của 2 repo ngoài, đã gộp vào repo (make không phải clone)
-external/**/__pycache__/
-external/**/*.pyc
-external/**/*.so
+!external/
+external/*
+!external/.gitkeep
