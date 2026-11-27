@@ -31,6 +31,7 @@ Biến môi trường: EXHIBITFLOW_WEB_DIR (thư mục giao diện, mặc địn
 trên Linux), EXHIBITFLOW_MAX_MB (giới hạn upload, mặc định 600), EXHIBITFLOW_SAVE_VIDEO=0 để không ghi live.mp4.
 """
 import argparse
+import copy
 import asyncio
 import json
 import os
@@ -63,6 +64,8 @@ from exhibitflow import multicam  # noqa: E402
 from exhibitflow import source as efsource  # noqa: E402
 from exhibitflow import tuning as _tuning  # noqa: E402
 import site_events  # noqa: E402
+import site_fusion  # noqa: E402
+import site_parallel  # noqa: E402
 import site_runner  # noqa: E402
 
 ALLOWED = {'.mp4', '.avi', '.mov', '.mkv', '.webm'}
@@ -863,45 +866,100 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
             return 'cpu'
 
     def site_events_stage(job, site):
-        """Engine trên từng camera -> hành vi bất thường theo toạ độ ảnh -> sàn (mét) -> gộp các camera -> ghi vào site_result.json.
-        Lỗi ở đây KHÔNG làm hỏng bản đồ ghép: kết quả vẫn trả, kèm `events_error`."""
+        """Engine trên từng camera (SONG SONG nếu được) -> đối chiếu chéo camera (ID người, hành vi bất thường) -> hành vi theo toạ độ ảnh ->
+        sàn (mét) -> gộp các camera -> ghi vào site_result.json. Lỗi ở đây KHÔNG làm hỏng bản đồ ghép: kết quả vẫn trả, kèm `events_error`."""
         rpath = job['out'] / 'site_result.json'
         result = json.loads(rpath.read_text(encoding='utf-8'))
-        cam_events, errors, seen = [], [], []
-        gallery = {}                                    # ngoại hình theo ID chung, dùng chung các camera
+        errors, seen, cam_events = [], [], []
+        tls, id_maps = {}, job.setdefault('id_map', {})
         job['stage'] = 2
-        try:
-            for cam, path in job['videos'].items():
-                job['log'].append(f'[events] {site["cameras"][cam].get("label", cam)}: phân tích hành vi bất thường...')
-                try:
-                    app_site_ids['labeler'], app_site_ids['votes'] = None, {}
+
+        def cam_ctx(cam, path):
+            """K, R, t / ma trận chiếu của camera + thông số video, dùng cho nhãn ID chung (cả luồng tuần tự lẫn song song)."""
+            vi = video_info(path)
+            spec = site_events.fit_to_video(site['cameras'][cam], int(vi['width']), int(vi['height']))
+            H = next((c.get('H') for c in result.get('cameras', []) if c.get('id') == cam), None)
+            return vi, spec, H
+
+        par_n = int(os.environ.get('EXHIBITFLOW_SITE_PARALLEL', '0') or 0) or len(job['videos'])     # 1 = chạy tuần tự
+        if not demo and len(job['videos']) > 1 and par_n > 1:
+            try:
+                args = {}
+                for cam, path in job['videos'].items():
+                    vi, spec, H = cam_ctx(cam, path)
+                    args[cam] = dict(spec=spec, H=H, frames=result.get('frames', []), fps=vi['fps'], wh=(vi['width'], vi['height']),
+                                     det_conf=web_cfg.get('det_conf'))
+                if runner.engine is not None:           # model của tiến trình chính nhường VRAM cho các tiến trình camera
+                    runner.engine.close()
+                    runner.engine = None
+                    with state.lock:
+                        state.models_state = 'idle'
+                maxf = int(SITE_MAX_SECONDS * max(video_info(p)['fps'] for p in job['videos'].values()))
+                job['log'].append(f'[events] chạy song song {len(job["videos"])} camera (mỗi camera một tiến trình + VLM riêng)...')
+                got = site_parallel.run(job['videos'], state.root / 'sites' / job['id'] / 'cams',
+                                        dict(state.settings, realtime=False, make_map=False, map_image='auto', max_frames=maxf),
+                                        args, job['log'].append, local=local, max_parallel=par_n)
+                for cam, (tl, idm) in got.items():
+                    tls[cam], id_maps[cam] = tl, idm
+            except Exception as e:                      # noqa: BLE001 - song song lỗi (vd. thiếu VRAM): lùi về chạy tuần tự, kết quả vẫn đúng
+                job['log'].append(f'[events] chạy song song lỗi ({type(e).__name__}: {str(e)[:200]}): chuyển sang chạy tuần tự')
+                tls.clear()
+                runner.preload()
+        if not tls:                                     # luồng tuần tự (và đường lùi)
+            gallery = {}                                # ngoại hình theo ID chung, dùng chung các camera
+            try:
+                for cam, path in job['videos'].items():
+                    job['log'].append(f'[events] {site["cameras"][cam].get("label", cam)}: phân tích hành vi bất thường...')
                     try:
-                        vi = video_info(path)
-                        spec0 = site_events.fit_to_video(site['cameras'][cam], int(vi['width']), int(vi['height']))
-                        H0 = next((c.get('H') for c in result.get('cameras', []) if c.get('id') == cam), None)
-                        mp0 = site_events.homography_mapper(H0, spec0['K'], spec0.get('dist')) if H0 else site_events.floor_mapper(spec0)
-                        app_site_ids['labeler'] = site_events.GlobalIdLabeler(result.get('frames', []), mp0, vi['fps'], (vi['width'], vi['height']), gallery=gallery)
-                    except Exception as e:             # noqa: BLE001 - không ghép được ID chung: video vẫn có ID cục bộ
-                        job['log'].append(f'[events] {cam}: không đổi được sang ID chung ({e})')
-                    tl = app.state.analyze_video(job, path)
-                    job.setdefault('id_map', {})[cam] = {t: max(v, key=v.get) for t, v in app_site_ids.get('votes', {}).items() if v}
-                    if tl.get('_live'):
-                        job.setdefault('live', {})[cam] = tl['_live']
-                    if tl.get('_result_dir'):
-                        job.setdefault('result_dirs', {})[cam] = tl['_result_dir']
-                    spec = site_events.fit_to_video(site['cameras'][cam], int(tl['width']), int(tl['height']))
-                    H = next((c.get('H') for c in result.get('cameras', []) if c.get('id') == cam), None)
-                    # có ma trận chiếu của repo map: dùng nó (cùng hệ toạ độ với ảnh mặt bằng); không thì tự tính từ K, R, t
-                    mapper = site_events.homography_mapper(H, spec['K'], spec.get('dist')) if H else site_events.floor_mapper(spec)
-                    cam_events += site_events.engine_events(tl, mapper, cam)
-                    seen.append(dict(cam=cam, **site_events.engine_summary(tl, tl.get('_run'))))
-                except Exception as e:                      # noqa: BLE001
-                    errors.append(f'{cam}: {type(e).__name__}: {e}')
-                    job['log'].append(f'[events] {cam} lỗi: {e}')
-        finally:
-            app_site_ids['labeler'] = None
-            if not demo:
-                state.save_settings(dict(max_frames=0))     # trả lại cài đặt, không cắt video của lượt phân tích sau
+                        app_site_ids['labeler'], app_site_ids['votes'] = None, {}
+                        try:
+                            vi, spec0, H0 = cam_ctx(cam, path)
+                            mp0 = site_events.homography_mapper(H0, spec0['K'], spec0.get('dist')) if H0 else site_events.floor_mapper(spec0)
+                            app_site_ids['labeler'] = site_events.GlobalIdLabeler(result.get('frames', []), mp0, vi['fps'], (vi['width'], vi['height']), gallery=gallery)
+                        except Exception as e:         # noqa: BLE001 - không ghép được ID chung: video vẫn có ID cục bộ
+                            job['log'].append(f'[events] {cam}: không đổi được sang ID chung ({e})')
+                        tls[cam] = app.state.analyze_video(job, path)
+                        id_maps[cam] = {t: max(v, key=v.get) for t, v in app_site_ids.get('votes', {}).items() if v}
+                    except Exception as e:              # noqa: BLE001
+                        errors.append(f'{cam}: {type(e).__name__}: {e}')
+                        job['log'].append(f'[events] {cam} lỗi: {e}')
+            finally:
+                app_site_ids['labeler'] = None
+                if not demo:
+                    state.save_settings(dict(max_frames=0))     # trả lại cài đặt, không cắt video của lượt phân tích sau
+        for cam, tl in tls.items():
+            if tl.get('_live'):
+                job.setdefault('live', {})[cam] = tl['_live']
+            if tl.get('_result_dir'):
+                job.setdefault('result_dirs', {})[cam] = tl['_result_dir']
+        # đối chiếu chéo: cùng một người (ID chung) ở cùng thời điểm phải có kết luận khớp nhau giữa các camera
+        fx = {}
+        try:
+            for cam, tl in tls.items():
+                rd = (job.get('result_dirs') or {}).get(cam)
+                if rd and (Path(rd) / 'result.json').is_file():
+                    fx[cam] = dict(tl=tl, res=json.loads((Path(rd) / 'result.json').read_text(encoding='utf-8')), id_map=id_maps.get(cam) or {})
+            if len(fx) > 1:
+                fused, info = site_fusion.fuse(fx)
+                result['fusion'] = info
+                for cam, v in fused.items():
+                    job.setdefault('fused', {})[cam] = v['res']
+                    tls[cam] = site_fusion.drop_demoted_alerts(tls[cam], v['drop'])
+                n_dem = sum(1 for e in info['events'] if e['status'] == 'conflict')
+                job['log'].append(f'[events] đối chiếu chéo camera ({info["policy"]}): {len(info["events"])} cảnh báo, {n_dem} bị hạ xuống "cần xem lại" vì camera khác không xác nhận')
+        except Exception as e:                          # noqa: BLE001 - đối chiếu lỗi: giữ kết quả riêng từng camera
+            job['log'].append(f'[events] đối chiếu chéo lỗi: {type(e).__name__}: {e}')
+        for cam, tl in tls.items():
+            try:
+                vi, spec, H = cam_ctx(cam, job['videos'][cam])
+                spec = site_events.fit_to_video(site['cameras'][cam], int(tl['width']), int(tl['height']))
+                # có ma trận chiếu của repo map: dùng nó (cùng hệ toạ độ với ảnh mặt bằng); không thì tự tính từ K, R, t
+                mapper = site_events.homography_mapper(H, spec['K'], spec.get('dist')) if H else site_events.floor_mapper(spec)
+                cam_events += site_events.engine_events(tl, mapper, cam)
+                seen.append(dict(cam=cam, **site_events.engine_summary(tl, tl.get('_run'))))
+            except Exception as e:                      # noqa: BLE001
+                errors.append(f'{cam}: {type(e).__name__}: {e}')
+                job['log'].append(f'[events] {cam} lỗi: {e}')
         job['stage'] = 3
         result['events'] = site_events.build_incidents(cam_events, result.get('frames', []))
         result['engine'] = seen
@@ -1065,8 +1123,9 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         rd = (get_site_job(jid).get('result_dirs') or {}).get(cam)
         if not rd or not (Path(rd) / 'result.json').is_file():
             raise HTTPException(404, 'Chưa có kết quả engine cho camera này')
-        res = json.loads((Path(rd) / 'result.json').read_text(encoding='utf-8'))
-        m = (get_site_job(jid).get('id_map') or {}).get(cam) or {}
+        job = get_site_job(jid)
+        res = copy.deepcopy((job.get('fused') or {}).get(cam)) or json.loads((Path(rd) / 'result.json').read_text(encoding='utf-8'))
+        m = (job.get('id_map') or {}).get(cam) or {}
         if m:                                              # ID cục bộ của tracker camera -> ID chung của map ghép (khớp nhãn trên live.mp4)
             g = lambda t: m.get(int(t), t) if t is not None else t      # noqa: E731
             for k in ('alerts', 'events', 'vlm_tasks'):

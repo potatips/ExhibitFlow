@@ -186,6 +186,10 @@ class _Cam:
         from exhibitflow import settings as efs
         for mod in cfg.get('preload') or []:             # module đăng ký backend (kiểm thử), nạp trước khi dựng engine
             importlib.import_module(mod)
+        for sp in cfg.get('setup') or []:                # {module, path, args}: module.setup(args, cam) áp bản vá riêng cho camera này (vd. server/site_live.py)
+            if sp.get('path') and sp['path'] not in sys.path:
+                sys.path.insert(0, sp['path'])
+            importlib.import_module(sp['module']).setup(sp.get('args') or {}, self)
         root = Path(cfg['root'])
         root.mkdir(parents=True, exist_ok=True)
         (root / 'settings.json').write_text(json.dumps(cfg['settings'], indent=2), encoding='utf-8')
