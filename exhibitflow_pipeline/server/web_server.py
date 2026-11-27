@@ -126,6 +126,7 @@ def apply_det_conf(runner, conf):
 def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
     state = State(data_dir)
     runner = (DemoRunner if demo else PipelineRunner)(state, local=local)
+    app_site_ids = {}                                   # {'labeler': GlobalIdLabeler|None, 'map': {id cục bộ: ID chung}}; do site_events_stage đặt
     web_cfg = dict(det_conf=parse_det_conf(os.environ.get('EXHIBITFLOW_DET_CONF')))   # ngưỡng phát hiện người (None = giữ mặc định 0.01 của engine)
     if mode:
         state.save_settings(dict(pipeline_mode=mode))
@@ -149,9 +150,32 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         import exhibitflow.engine as eng_mod
         _orig_put_label = eng_mod.put_label
 
+        # nhiều camera đã hiệu chuẩn: nhãn "ID n" trong live.mp4 đổi sang ID chung của map (cùng một người = cùng một số ở mọi camera)
+        site_ids = {'labeler': None, 'map': {}}
+        app_site_ids.update(site_ids)
+        _orig_render_live = eng_mod.render_live
+
+        def _render_live_global_ids(ctx, p, *a, **k):
+            lab = app_site_ids.get('labeler')
+            app_site_ids['map'] = {}
+            if lab is not None:
+                try:
+                    h, w = p.work.shape[:2]
+                    app_site_ids['map'] = lab.labels(p.idx, [dict(id=r['id'], box=r['box']) for r in (p.tracks or [])], (w, h))
+                except Exception:                      # noqa: BLE001 - không để lỗi ghép ID làm hỏng video
+                    app_site_ids['map'] = {}
+            return _orig_render_live(ctx, p, *a, **k)
+
+        eng_mod.render_live = _render_live_global_ids
+
         def _put_label_no_hud(img, text, *a, **k):
             if isinstance(text, str) and text.startswith(('frame ', 'pipeline ', 'VLM queue')):
                 return None
+            gm = app_site_ids.get('map')
+            if gm and isinstance(text, str):
+                m = re.match(r'ID (\d+)(.*)$', text)
+                if m and int(m.group(1)) in gm:
+                    text = f'ID {gm[int(m.group(1))]}' + m.group(2)
             return _orig_put_label(img, text, *a, **k)
 
         eng_mod.put_label = _put_label_no_hud
@@ -855,6 +879,15 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
             for cam, path in job['videos'].items():
                 job['log'].append(f'[events] {site["cameras"][cam].get("label", cam)}: phân tích hành vi bất thường...')
                 try:
+                    app_site_ids['labeler'] = None
+                    try:
+                        vi = video_info(path)
+                        spec0 = site_events.fit_to_video(site['cameras'][cam], int(vi['width']), int(vi['height']))
+                        H0 = next((c.get('H') for c in result.get('cameras', []) if c.get('id') == cam), None)
+                        mp0 = site_events.homography_mapper(H0, spec0['K'], spec0.get('dist')) if H0 else site_events.floor_mapper(spec0)
+                        app_site_ids['labeler'] = site_events.GlobalIdLabeler(result.get('frames', []), mp0, vi['fps'], (vi['width'], vi['height']))
+                    except Exception as e:             # noqa: BLE001 - không ghép được ID chung: video vẫn có ID cục bộ
+                        job['log'].append(f'[events] {cam}: không đổi được sang ID chung ({e})')
                     tl = app.state.analyze_video(job, path)
                     if tl.get('_live') and Path(tl['_live']).is_file():
                         job.setdefault('live', {})[cam] = Path(tl['_live'])
@@ -868,6 +901,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                     errors.append(f'{cam}: {type(e).__name__}: {e}')
                     job['log'].append(f'[events] {cam} lỗi: {e}')
         finally:
+            app_site_ids['labeler'] = None
             if not demo:
                 state.save_settings(dict(max_frames=0))     # trả lại cài đặt, không cắt video của lượt phân tích sau
         job['stage'] = 3
