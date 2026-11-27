@@ -22,7 +22,6 @@ python -m http.server 8765 --bind 127.0.0.1
 | **Video phân tích** | Nhập **đường dẫn file / thư mục (trên server) hoặc URL video**, hoặc bấm **Upload** để chọn file trên máy. Bấm **Phân tích** để chạy, **Dừng** để hủy. |
 | **Header** | Chip trạng thái kết nối (bấm để mở Settings), đồng hồ, **Refresh Data** (kiểm tra lại kết nối và trạng thái máy). |
 | **Cảnh báo hành vi** | Mọi hành vi dạng thẻ: ảnh, nhãn hành vi, Visitor → hiện vật, thời gian, độ tin cậy và lý do của VLM, nút **Xem lại / Xác nhận / Bỏ qua**; lọc Tất cả / Bất thường / Cần xác nhận / Đã loại; **Xuất CSV**. |
-| **System status** | CPU / RAM / GPU / VRAM của máy chạy backend. |
 | **Thông báo** | Một dòng dưới hàng nguồn video hiện bước đang chạy hoặc lỗi gần nhất (không còn khung nhật ký). |
 | **Settings** | Nhập URL backend, danh sách camera (cho Realtime), ngưỡng tin cậy VLM. |
 
