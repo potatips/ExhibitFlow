@@ -812,6 +812,13 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
             out['_run'] = json.loads((tl.parent / 'run.json').read_text(encoding='utf-8'))
         except Exception:                                  # noqa: BLE001
             pass
+        # live.mp4 (video đã vẽ khung) do engine ghi vào results/<tên video>/, KHÔNG nằm trong runs/<rid>/
+        res = state.root / 'results'
+        cands = [res / Path(path).stem / 'live.mp4'] + sorted(res.rglob('live.mp4'), key=lambda q: q.stat().st_mtime, reverse=True)
+        for lv in cands:
+            if lv.is_file() and lv.stat().st_mtime >= t_start - 1:
+                out['_live'], out['_result_dir'] = str(lv), str(lv.parent)
+                break
         return out
 
     app.state.analyze_video = analyze_video            # thay được khi kiểm thử (không cần GPU)
@@ -840,6 +847,8 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                 job['log'].append(f'[events] {site["cameras"][cam].get("label", cam)}: phân tích hành vi bất thường...')
                 try:
                     tl = app.state.analyze_video(job, path)
+                    if tl.get('_live'):
+                        job.setdefault('live', {})[cam] = tl['_live']
                     spec = site_events.fit_to_video(site['cameras'][cam], int(tl['width']), int(tl['height']))
                     H = next((c.get('H') for c in result.get('cameras', []) if c.get('id') == cam), None)
                     # có ma trận chiếu của repo map: dùng nó (cùng hệ toạ độ với ảnh mặt bằng); không thì tự tính từ K, R, t
@@ -1018,8 +1027,11 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         return FileResponse(p, media_type='image/png', headers={'Cache-Control': 'no-store'})
 
     @app.get('/api/site-jobs/{jid}/video/{cam}')
-    def site_job_video(jid: str, cam: str):
+    def site_job_video(jid: str, cam: str, kind: str = 'live'):
         j = get_site_job(jid)
+        lv = (j.get('live') or {}).get(cam)
+        if kind != 'original' and lv and Path(lv).is_file():
+            return FileResponse(lv, media_type='video/mp4')
         p = j['videos'].get(cam)
         if p is None or not Path(p).is_file():
             raise HTTPException(404, 'Không có video camera này')
