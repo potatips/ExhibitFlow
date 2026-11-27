@@ -162,6 +162,9 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                 try:
                     h, w = p.work.shape[:2]
                     app_site_ids['map'] = lab.labels(p.idx, [dict(id=r['id'], box=r['box']) for r in (p.tracks or [])], (w, h), image=p.work)
+                    for tid, gid in app_site_ids['map'].items():          # phiếu bầu để bảng cảnh báo dùng cùng ID chung với video
+                        v = app_site_ids.setdefault('votes', {}).setdefault(int(tid), {})
+                        v[gid] = v.get(gid, 0) + 1
                 except Exception:                      # noqa: BLE001 - không để lỗi ghép ID làm hỏng video
                     app_site_ids['map'] = {}
             return _orig_render_live(ctx, p, *a, **k)
@@ -871,7 +874,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
             for cam, path in job['videos'].items():
                 job['log'].append(f'[events] {site["cameras"][cam].get("label", cam)}: phân tích hành vi bất thường...')
                 try:
-                    app_site_ids['labeler'] = None
+                    app_site_ids['labeler'], app_site_ids['votes'] = None, {}
                     try:
                         vi = video_info(path)
                         spec0 = site_events.fit_to_video(site['cameras'][cam], int(vi['width']), int(vi['height']))
@@ -881,6 +884,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                     except Exception as e:             # noqa: BLE001 - không ghép được ID chung: video vẫn có ID cục bộ
                         job['log'].append(f'[events] {cam}: không đổi được sang ID chung ({e})')
                     tl = app.state.analyze_video(job, path)
+                    job.setdefault('id_map', {})[cam] = {t: max(v, key=v.get) for t, v in app_site_ids.get('votes', {}).items() if v}
                     if tl.get('_live'):
                         job.setdefault('live', {})[cam] = tl['_live']
                     if tl.get('_result_dir'):
@@ -1061,7 +1065,19 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         rd = (get_site_job(jid).get('result_dirs') or {}).get(cam)
         if not rd or not (Path(rd) / 'result.json').is_file():
             raise HTTPException(404, 'Chưa có kết quả engine cho camera này')
-        return FileResponse(Path(rd) / 'result.json', media_type='application/json')
+        res = json.loads((Path(rd) / 'result.json').read_text(encoding='utf-8'))
+        m = (get_site_job(jid).get('id_map') or {}).get(cam) or {}
+        if m:                                              # ID cục bộ của tracker camera -> ID chung của map ghép (khớp nhãn trên live.mp4)
+            g = lambda t: m.get(int(t), t) if t is not None else t      # noqa: E731
+            for k in ('alerts', 'events', 'vlm_tasks'):
+                for e in res.get(k) or []:
+                    if e.get('track_id') is not None:
+                        e['track_id'] = g(e['track_id'])
+            res['track_summary'] = {str(g(t)): v for t, v in (res.get('track_summary') or {}).items()}
+            dg = res.get('diagnostics') or {}
+            if isinstance(dg.get('tracks'), dict):
+                dg['tracks'] = {str(g(t)): dict(v, track_id=g(t)) if isinstance(v, dict) else v for t, v in dg['tracks'].items()}
+        return res
 
     @app.get('/api/site-jobs/{jid}/files/{cam}/{path:path}')
     def site_job_cam_file(jid: str, cam: str, path: str):
