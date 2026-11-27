@@ -518,7 +518,7 @@ class VLMWorker(threading.Thread):
 # ---------------- Xử lý đầu vào theo cấu hình VLM: n_images / max_side / short_json ----------------
 # Giống hệt benchmark (cùng cách lấy mẫu, resize INTER_AREA + JPEG q92, cùng prompt) để số đo benchmark còn đúng.
 def _short_template():
-    return settings.PROMPT_TEMPLATE.split('Answer JSON only:')[0] + 'Answer JSON only:\n{{"label": "...", "confidence": <your certainty, a number between 0.5 and 1.0>}}'
+    return settings.PROMPT_TEMPLATE.split('Answer JSON only:')[0] + 'Answer JSON only:\n{{"label": "...", "confidence": 0.0}}'
 
 
 def _resized(path, side):
