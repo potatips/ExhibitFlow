@@ -136,10 +136,11 @@
   <div class="setgrid">
     <div class="card">
       <h3>Kết nối backend (Kaggle / Colab)</h3>
+      <div class="opt"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="beDirect"> Chạy trực tiếp trên GPU server (không cần URL backend)</label></div>
       <div class="opt"><label>URL backend <span id="beMsg">chưa kết nối</span></label>
         <input type="text" id="beUrl" class="txt" placeholder="https://xxxx.trycloudflare.com" spellcheck="false"></div>
       <div class="row"><button class="btn pri" id="beBtn">Kết nối</button><button class="btn" id="beOff">Ngắt</button></div>
-      <p class="note">Chạy notebook <code>exhibitflow_kaggle_server.ipynb</code> trên Kaggle, copy URL in ở ô "Mở đường hầm" rồi dán vào đây. Kết nối xong, quay lại Dashboard để Upload hoặc nhập đường dẫn video và bấm Phân tích.</p>
+      <p class="note">Chạy notebook <code>exhibitflow_kaggle_server.ipynb</code> trên Kaggle, copy URL in ở ô "Mở đường hầm" rồi dán vào đây. Nếu bạn mở dashboard bằng chính link của GPU server (vd. Vast <code>http://IP:port</code>), bật ô "Chạy trực tiếp" ở trên: trang sẽ gọi API cùng địa chỉ. Kết nối xong, quay lại Dashboard để Upload hoặc nhập đường dẫn video và bấm Phân tích.</p>
     </div>
     <div class="card">
       <h3>Camera (Realtime)</h3>

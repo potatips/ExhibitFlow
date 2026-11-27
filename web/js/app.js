@@ -170,13 +170,15 @@ const EMPTY={meta:{duration:60,camera_id:'',width:1280,height:720,nw:960},arts:[
 /* ---------- Backend ---------- */
 const NGROK_H={'ngrok-skip-browser-warning':'1'};
 async function errText(r){try{const j=await r.json();return j.detail||JSON.stringify(j)}catch{return r.status+' '+r.statusText}}
-const API={base:(()=>{try{return localStorage.getItem('ef_api')||''}catch{return ''}})(),ok:false,
+const API={direct:(()=>{try{return localStorage.getItem('ef_direct')==='1'}catch{return false}})(),
+  base:(()=>{try{return localStorage.getItem('ef_direct')==='1'?'':(localStorage.getItem('ef_api')||'')}catch{return ''}})(),ok:false,
   async f(p,o={}){const r=await fetch(this.base+p,{...o,headers:{...NGROK_H,...(o.headers||{})}});if(!r.ok)throw new Error(await errText(r));return r},
   async ping(){this.ok=false;
-    if(this.base){try{const r=await fetch(this.base+'/api/health',{headers:NGROK_H,signal:AbortSignal.timeout(6000)});this.ok=r.ok}catch{this.ok=false}}
+    /* Chế độ trực tiếp / chưa nhập URL: thử cùng origin (trang được chính GPU server phục vụ) */
+    if(this.direct||this.base||location.protocol!=='file:'){try{const r=await fetch(this.base+'/api/health',{headers:NGROK_H,signal:AbortSignal.timeout(6000)});this.ok=r.ok}catch{this.ok=false}}
     const c=$('#beChip');c.classList.toggle('ok',this.ok);c.classList.toggle('bad',!this.ok);
     c.querySelector('span').textContent=this.ok?'Đã kết nối':'Mất kết nối';
-    $('#beMsg').textContent=this.ok?'đã kết nối ✓':(this.base?'không kết nối được':'chưa kết nối');
+    $('#beMsg').textContent=this.ok?'đã kết nối ✓':(this.direct?'GPU server cùng origin: không phản hồi':this.base?'không kết nối được':'chưa kết nối');
     pollSystem();if(typeof loadSites==='function')loadSites()},
   async system(){return (await this.f('/api/system')).json()},
   async start(fd){return (await (await this.f('/api/jobs',{method:'POST',body:fd})).json()).job_id},
@@ -486,7 +488,7 @@ async function startAnalysis(){
     else if(API.ok&&!cam&&S.mode==='batch'&&S.files.length>1)await runMulti(S.files);
     else if(API.ok)await(S.mode==='rt'?runRealtime(src,cam):runLive(src));
     else if(CFG.demo)await(S.mode==='rt'?runDemoRealtime(cam):runDemo());
-    else{setStatus('Mất kết nối');logLine('Chưa kết nối backend. Vào Settings để nhập URL.')}
+    else{setStatus('Mất kết nối');logLine('Chưa kết nối backend. Vào Settings: nhập URL, hoặc bật "Chạy trực tiếp trên GPU server" nếu trang này được mở từ chính server.')}
   }catch(err){logLine('LỖI: '+err.message);setStatus('Lỗi')}
   finally{setBusy(false);pollSystem()}}
 
@@ -1011,7 +1013,11 @@ $('#csvBtn').onclick=()=>{
 document.addEventListener('keydown',e=>{if(e.code==='Space'&&!$('#v-dash').hidden&&!/SELECT|INPUT|BUTTON|TEXTAREA/.test(e.target.tagName)){e.preventDefault();$('#play').click()}});
 
 /* ---------- Settings: kết nối, nhập kết quả ---------- */
-$('#beUrl').value=API.base;
+function applyDirectUI(){$('#beDirect').checked=API.direct;$('#beUrl').disabled=API.direct;$('#beBtn').disabled=API.direct;$('#beOff').disabled=API.direct;
+  $('#beUrl').value=API.direct?'':(API.base||(()=>{try{return localStorage.getItem('ef_api')||''}catch{return ''}})())}
+$('#beDirect').onchange=async()=>{API.direct=$('#beDirect').checked;try{localStorage.setItem('ef_direct',API.direct?'1':'0')}catch{}
+  API.base=API.direct?'':(()=>{try{return localStorage.getItem('ef_api')||''}catch{return ''}})();applyDirectUI();await API.ping()};
+applyDirectUI();
 $('#beBtn').onclick=async()=>{API.base=$('#beUrl').value.trim().replace(/\/+$/,'');try{localStorage.setItem('ef_api',API.base)}catch{}await API.ping()};
 $('#beOff').onclick=async()=>{API.base='';$('#beUrl').value='';try{localStorage.removeItem('ef_api')}catch{}await API.ping()};
 $('#conf').oninput=e=>$('#confV').textContent=(+e.target.value).toFixed(2);
