@@ -218,6 +218,52 @@ def homography_mapper(H, K, dist=None):
     return to_map
 
 
+class GlobalIdLabeler:
+    """ID theo từng camera (bộ theo dõi của engine, mỗi camera đánh số riêng) -> ID chung của map ghép, để cùng một người mang cùng một số
+    ở mọi camera. Mỗi khung: lấy điểm chân của hộp người -> sàn (mét) -> ghép (greedy theo khoảng cách) với những người ghép chung đang có
+    ở thời điểm đó (frames = [{t, people:[{id,x,y}]}] của map). Ngoài ngưỡng gate_m thì giữ ID chung đã gán trước đó cho track này (nếu còn
+    trống); chưa từng ghép được thì trả None (hiện ID cục bộ như cũ)."""
+
+    def __init__(self, frames, to_floor, fps, video_wh, gate_m=1.5, max_dt=1.0):
+        self.frames = [f for f in frames if f.get('people')]
+        self.times = np.array([f['t'] for f in self.frames], float)
+        self.to_floor, self.fps, self.vw, self.vh = to_floor, float(fps or 25.0), float(video_wh[0]), float(video_wh[1])
+        self.gate, self.max_dt, self.last = gate_m, max_dt, {}
+
+    def labels(self, idx, recs, work_wh):
+        """idx: chỉ số khung; recs: [{id, box:[x1,y1,x2,y2]}] theo ảnh work (rộng, cao = work_wh) -> {id cục bộ: ID chung}."""
+        if not len(self.times) or not recs:
+            return {}
+        t = idx / self.fps
+        j = int(np.argmin(np.abs(self.times - t)))
+        people = self.frames[j]['people'] if abs(self.times[j] - t) <= self.max_dt else []
+        sx, sy = self.vw / float(work_wh[0]), self.vh / float(work_wh[1])
+        feet = [(((r['box'][0] + r['box'][2]) / 2) * sx, r['box'][3] * sy) for r in recs]
+        xy = np.asarray(self.to_floor(feet), float).reshape(-1, 2)
+        pairs = []
+        for i, r in enumerate(recs):
+            if not np.isfinite(xy[i]).all():
+                continue
+            for q in people:
+                d = math.hypot(xy[i][0] - q['x'], xy[i][1] - q['y'])
+                if d <= self.gate:
+                    pairs.append((d, i, q['id']))
+        pairs.sort()
+        out, used = {}, set()
+        for _, i, gid in pairs:
+            tid = recs[i]['id']
+            if tid not in out and gid not in used:
+                out[tid] = gid
+                used.add(gid)
+        for r in recs:                                    # không ghép được ở khung này: giữ ID chung trước đó (nếu không trùng người khác)
+            tid = r['id']
+            if tid not in out and self.last.get(tid) is not None and self.last[tid] not in used:
+                out[tid] = self.last[tid]
+                used.add(self.last[tid])
+        self.last.update(out)
+        return out
+
+
 def stitch_ids(frames, max_gap_s=3.0, gate_m=0.8, speed_mps=0.8):
     """Nối các ID bị ĐỨT thành một: người bị che / không phát hiện vài giây thì bộ theo dõi cấp ID mới, nên cùng một người đổi số (vd. #12 rồi #77).
     Chạy sau khi đã có toàn bộ kết quả (offline): track B bắt đầu SAU khi track A kết thúc, cách tối đa max_gap_s giây, và điểm đầu của B nằm gần điểm cuối
