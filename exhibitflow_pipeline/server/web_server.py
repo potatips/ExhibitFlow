@@ -161,7 +161,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
             if lab is not None:
                 try:
                     h, w = p.work.shape[:2]
-                    app_site_ids['map'] = lab.labels(p.idx, [dict(id=r['id'], box=r['box']) for r in (p.tracks or [])], (w, h))
+                    app_site_ids['map'] = lab.labels(p.idx, [dict(id=r['id'], box=r['box']) for r in (p.tracks or [])], (w, h), image=p.work)
                 except Exception:                      # noqa: BLE001 - không để lỗi ghép ID làm hỏng video
                     app_site_ids['map'] = {}
             return _orig_render_live(ctx, p, *a, **k)
@@ -865,6 +865,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         rpath = job['out'] / 'site_result.json'
         result = json.loads(rpath.read_text(encoding='utf-8'))
         cam_events, errors, seen = [], [], []
+        gallery = {}                                    # ngoại hình theo ID chung, dùng chung các camera
         job['stage'] = 2
         try:
             for cam, path in job['videos'].items():
@@ -876,7 +877,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                         spec0 = site_events.fit_to_video(site['cameras'][cam], int(vi['width']), int(vi['height']))
                         H0 = next((c.get('H') for c in result.get('cameras', []) if c.get('id') == cam), None)
                         mp0 = site_events.homography_mapper(H0, spec0['K'], spec0.get('dist')) if H0 else site_events.floor_mapper(spec0)
-                        app_site_ids['labeler'] = site_events.GlobalIdLabeler(result.get('frames', []), mp0, vi['fps'], (vi['width'], vi['height']))
+                        app_site_ids['labeler'] = site_events.GlobalIdLabeler(result.get('frames', []), mp0, vi['fps'], (vi['width'], vi['height']), gallery=gallery)
                     except Exception as e:             # noqa: BLE001 - không ghép được ID chung: video vẫn có ID cục bộ
                         job['log'].append(f'[events] {cam}: không đổi được sang ID chung ({e})')
                     tl = app.state.analyze_video(job, path)

@@ -218,20 +218,46 @@ def homography_mapper(H, K, dist=None):
     return to_map
 
 
+def appearance_embedding(img, box):
+    """Đặc trưng ngoại hình nhẹ của một người: histogram màu HSV của thân trên và thân dưới (căn Hellinger, chuẩn hoá L2). Không cần trọng số/GPU.
+    Phân biệt tốt người mặc đồ khác màu; không thay được mạng ReID khi nhiều người mặc đồ giống nhau. Trả None nếu hộp quá nhỏ."""
+    import cv2
+    h, w = img.shape[:2]
+    x1, y1, x2, y2 = [int(v) for v in box]
+    x1, x2, y1, y2 = max(0, x1), min(w, x2), max(0, y1), min(h, y2)
+    bw, bh = x2 - x1, y2 - y1
+    if bw < 8 or bh < 16:
+        return None
+    parts = []
+    for a, b in ((0.15, 0.5), (0.5, 0.95)):
+        c = img[y1 + int(bh * a):y1 + int(bh * b), x1 + int(bw * 0.2):x2 - int(bw * 0.2)]
+        if c.size == 0:
+            return None
+        hist = cv2.calcHist([cv2.cvtColor(c, cv2.COLOR_BGR2HSV)], [0, 1, 2], None, [8, 4, 4], [0, 180, 0, 256, 0, 256]).ravel()
+        parts.append(np.sqrt(hist / max(hist.sum(), 1.0)))
+    v = np.concatenate(parts)
+    return v / max(float(np.linalg.norm(v)), 1e-9)
+
+
 class GlobalIdLabeler:
     """ID theo từng camera (bộ theo dõi của engine, mỗi camera đánh số riêng) -> ID chung của map ghép, để cùng một người mang cùng một số
-    ở mọi camera. Mỗi khung: lấy điểm chân của hộp người -> sàn (mét) -> ghép (greedy theo khoảng cách) với những người ghép chung đang có
-    ở thời điểm đó (frames = [{t, people:[{id,x,y}]}] của map). Ngoài ngưỡng gate_m thì giữ ID chung đã gán trước đó cho track này (nếu còn
-    trống); chưa từng ghép được thì trả None (hiện ID cục bộ như cũ)."""
+    ở mọi camera. Mỗi khung: điểm chân của hộp người -> sàn (mét) -> ghép (greedy theo chi phí thấp nhất) với những người ghép chung đang có
+    ở thời điểm đó (frames = [{t, people:[{id,x,y}]}] của map). Chi phí = khoảng cách sàn / gate + w * khoảng cách ngoại hình so với
+    "thư viện" của ID chung đó. Thư viện ngoại hình (`gallery`, trung bình trượt) DÙNG CHUNG giữa các camera: người đã được camera này gán ID
+    thì camera kia so ngoại hình với nó. Ngoài gate thì giữ ID chung đã gán trước đó cho track này (nếu còn trống); chưa từng ghép được thì
+    không có trong kết quả (hiện ID cục bộ như cũ)."""
 
-    def __init__(self, frames, to_floor, fps, video_wh, gate_m=1.5, max_dt=1.0):
+    def __init__(self, frames, to_floor, fps, video_wh, gate_m=1.5, max_dt=1.0, gallery=None, app_weight=0.8, app_max=0.6):
         self.frames = [f for f in frames if f.get('people')]
         self.times = np.array([f['t'] for f in self.frames], float)
         self.to_floor, self.fps, self.vw, self.vh = to_floor, float(fps or 25.0), float(video_wh[0]), float(video_wh[1])
         self.gate, self.max_dt, self.last = gate_m, max_dt, {}
+        self.gallery = gallery if gallery is not None else {}
+        self.app_weight, self.app_max = app_weight, app_max
 
-    def labels(self, idx, recs, work_wh):
-        """idx: chỉ số khung; recs: [{id, box:[x1,y1,x2,y2]}] theo ảnh work (rộng, cao = work_wh) -> {id cục bộ: ID chung}."""
+    def labels(self, idx, recs, work_wh, image=None):
+        """idx: chỉ số khung; recs: [{id, box:[x1,y1,x2,y2]}] theo ảnh work (rộng, cao = work_wh); image: ảnh BGR (tuỳ chọn, bật so ngoại hình)
+        -> {id cục bộ: ID chung}."""
         if not len(self.times) or not recs:
             return {}
         t = idx / self.fps
@@ -240,14 +266,20 @@ class GlobalIdLabeler:
         sx, sy = self.vw / float(work_wh[0]), self.vh / float(work_wh[1])
         feet = [(((r['box'][0] + r['box'][2]) / 2) * sx, r['box'][3] * sy) for r in recs]
         xy = np.asarray(self.to_floor(feet), float).reshape(-1, 2)
+        embs = [appearance_embedding(image, r['box']) if image is not None else None for r in recs]
         pairs = []
         for i, r in enumerate(recs):
             if not np.isfinite(xy[i]).all():
                 continue
             for q in people:
                 d = math.hypot(xy[i][0] - q['x'], xy[i][1] - q['y'])
-                if d <= self.gate:
-                    pairs.append((d, i, q['id']))
+                if d > self.gate:
+                    continue
+                g = self.gallery.get(q['id'])
+                da = float(1.0 - embs[i] @ g) if embs[i] is not None and g is not None else None
+                if da is not None and da > self.app_max:         # khác hẳn ngoại hình: không phải người đó dù đứng gần
+                    continue
+                pairs.append((d / self.gate + (self.app_weight * da if da is not None else 0.0), i, q['id']))
         pairs.sort()
         out, used = {}, set()
         for _, i, gid in pairs:
@@ -260,6 +292,12 @@ class GlobalIdLabeler:
             if tid not in out and self.last.get(tid) is not None and self.last[tid] not in used:
                 out[tid] = self.last[tid]
                 used.add(self.last[tid])
+        for i, r in enumerate(recs):                      # cập nhật thư viện ngoại hình của ID chung đã gán
+            gid = out.get(r['id'])
+            if gid is not None and embs[i] is not None:
+                g = self.gallery.get(gid)
+                m = embs[i] if g is None else 0.9 * g + 0.1 * embs[i]
+                self.gallery[gid] = m / max(float(np.linalg.norm(m)), 1e-9)
         self.last.update(out)
         return out
 
