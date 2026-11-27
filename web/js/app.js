@@ -164,7 +164,7 @@ const S={t:0,playing:false,speed:1,videoURL:null,file:null,filter:'all',loaded:f
   progress:0,srcName:'',layers:{boxes:true,skel:false,labels:true,art:false},mlayers:{trails:true,zones:true,heat:false,all:false},mapTab:'events',heatMode:'presence'};
 const vid=$('#vid');
 let LIVE=null;
-S.mode=(()=>{try{const m=localStorage.getItem('ef_mode');return ['rt','cam','multi'].includes(m)?m:'batch'}catch{return 'batch'}})();S.liveSim=false;
+S.mode=(()=>{try{return localStorage.getItem('ef_mode')==='rt'?'rt':'batch'}catch{return 'batch'}})();S.liveSim=false;
 const EMPTY={meta:{duration:60,camera_id:'',width:1280,height:720,nw:960},arts:[],tracks:[],events:[]};
 
 /* ---------- Backend ---------- */
@@ -173,20 +173,16 @@ async function errText(r){try{const j=await r.json();return j.detail||JSON.strin
 const API={base:(()=>{try{return localStorage.getItem('ef_api')||''}catch{return ''}})(),ok:false,
   async f(p,o={}){const r=await fetch(this.base+p,{...o,headers:{...NGROK_H,...(o.headers||{})}});if(!r.ok)throw new Error(await errText(r));return r},
   async ping(){this.ok=false;
-    /* base rỗng = cùng origin với trang (web chạy thẳng trên server GPU); chỉ cần base khi mở web ở máy khác */
-    try{const r=await fetch(this.base+'/api/health',{headers:NGROK_H,signal:AbortSignal.timeout(6000)});this.ok=r.ok&&(await r.json()).ok===true}catch{this.ok=false}
+    if(this.base){try{const r=await fetch(this.base+'/api/health',{headers:NGROK_H,signal:AbortSignal.timeout(6000)});this.ok=r.ok}catch{this.ok=false}}
     const c=$('#beChip');c.classList.toggle('ok',this.ok);c.classList.toggle('bad',!this.ok);
     c.querySelector('span').textContent=this.ok?'Đã kết nối':'Mất kết nối';
     $('#beMsg').textContent=this.ok?'đã kết nối ✓':(this.base?'không kết nối được':'chưa kết nối');
-    if(this.ok&&!TSCHEMA)loadTuningSchema();
     pollSystem();if(typeof loadSites==='function')loadSites()},
   async system(){return (await this.f('/api/system')).json()},
-  async tuningSchema(){return (await this.f('/api/tuning/schema')).json()},
   async start(fd){return (await (await this.f('/api/jobs',{method:'POST',body:fd})).json()).job_id},
   async job(id){return (await this.f(`/api/jobs/${id}`)).json()},
   async result(id){return (await this.f(`/api/jobs/${id}/result`)).json()},
   async cancel(id){try{await this.f(`/api/jobs/${id}/cancel`,{method:'POST'})}catch{}},
-  async finish(id){try{await this.f(`/api/jobs/${id}/finish`,{method:'POST'})}catch{}},
   async blob(id,p){try{return URL.createObjectURL(await (await this.f(`/api/jobs/${id}/${p}`)).blob())}catch{return null}}
 };
 
@@ -195,10 +191,9 @@ const API={base:(()=>{try{return localStorage.getItem('ef_api')||''}catch{return
 const noisyLog=l=>/\d+%\||it\/s|s\/it|^Fetching \d+ files|\[\d+:\d+<|[█▏▎▍▌▋▊▉]/.test(l);
 /* Chỉ hiện tên bước đang chạy (không hiện log thô của pipeline như [DMA] ..., đường dẫn checkpoint) */
 function stageLine(j,seen){const n=(j.stages||[]).length,i=j.stage;if(j.status==='running'&&n&&i>=0&&i<n&&!seen.has('s'+i)){seen.add('s'+i);logLine(`[${i+1}/${n}] ${j.stages[i]}`)}}
-function logLine(m){const el=$('#srcmsg');el.textContent=m;el.className='srcmsg'+(/^(LỖI|Chưa)/.test(m)?' err':'')}
+function logLine(m){const el=$('#srcmsg');el.textContent=m;el.className='srcmsg'+(/^(LỖI|Chưa|Camera chưa)/.test(m)?' err':'')}
 function setStatus(t){$('#vstat').textContent=t}
-function setBusy(b){S.running=b;$('#modeSel').classList.toggle('lock',b);$('#runBtn').disabled=b;$('#stopBtn').disabled=!b;$('#uploadBtn').disabled=b;$('#src').disabled=b;$('#camKind').disabled=b;$('#rtspUrl').disabled=b;$('#multiBox').classList.toggle('lock',b);$('#stopBtn').textContent=b&&(S.mode==='cam'||S.mode==='multi')?'Dừng & xem kết quả':'Dừng';
-  if(b)$('#runBtn').textContent='Đang chạy…';else applySourceUI()}
+function setBusy(b){S.running=b;$('#modeSel').classList.toggle('lock',b);$('#runBtn').disabled=b;$('#stopBtn').disabled=!b;$('#uploadBtn').disabled=b;$('#src').disabled=b;$('#camSel').disabled=b;$('#camUrl').disabled=b;if(b)$('#runBtn').textContent='Đang chạy…';else applySourceUI()}
 
 /* ---------- System status ---------- */
 let SYS=null;const sim={cpu:6,ram:2.4,gpu:0,vram:.3};
@@ -244,7 +239,7 @@ function renderAlerts(){
     const btn=e.review?`<span class="st">✓ ${e.review==='ok'?'Đã xác nhận':'Đã bỏ qua'}</span>`
       :`<button class="btn sm" data-seek="${e.start}">Xem lại</button>${(e.decision==='NORMAL'||e.provisional)?'':`<button class="btn sm" data-rv="ok" data-id="${e.id}">Xác nhận</button><button class="btn sm" data-rv="no" data-id="${e.id}">Bỏ qua</button>`}`;
     return`<div class="al" data-id="${e.id}" style="--c:${col}"><img src="${e.img}" data-seek="${e.start}" alt="">
-      <div><div class="hd"><span class="badge">${lab}</span><b>Visitor #${e.track}</b><span class="meta">${e.cam?esc(e.cam)+' · ':''}→ ${esc(a.name)}</span></div>
+      <div><div class="hd"><span class="badge">${lab}</span><b>Visitor #${e.track}</b><span class="meta">→ ${esc(a.name)}</span></div>
       <div class="meta">${fmt(e.start)}–${fmt(e.end)} · VLM tin cậy ${e.conf==null?'—':((e.conf*100)|0)+'%'}</div>
       <div class="why">“${esc(e.reason)}”</div><div class="acts">${btn}</div></div></div>`}).join('')}
 function renderTimeline(){const tl=$('#tl');tl.querySelectorAll('.seg').forEach(n=>n.remove());
@@ -387,7 +382,7 @@ async function runDemo(){
   S.progress=100;loadData(makeMock(dur),S.videoURL,{name:S.file?S.file.name:'Dữ liệu mẫu'});setStatus('Hoàn tất (dữ liệu mẫu)');logLine('Hoàn tất.')}
 async function runLive(src){
   const fd=new FormData();if(S.file)fd.append('video',S.file);else fd.append('source',src);
-  fd.append('options',JSON.stringify({conf:+$('#conf').value,...pipeOpts(),realtime:false}));
+  fd.append('options',JSON.stringify({conf:+$('#conf').value}));
   setStatus('Đang chạy');logLine(S.file?'Tải video lên backend…':'Gửi đường dẫn / URL tới backend…');
   const id=await API.start(fd);S.jobId=id;const seen=new Set();let key=null;
   resetMap();mapLoop(id,()=>S.running&&S.jobId===id);
@@ -433,35 +428,24 @@ function applyLive(le){
       if(e.decision==='ANOMALY')L.banner={text:`Visitor #${e.track}: ${evLabel(row)} — ${(DATA.arts.find(a=>a.id===art)||{name:'hiện vật '+art}).name}`,cls:'red',until:performance.now()+8000}}}
   const st=le.status;
   if(st){S.t=st.t_s||0;S.progress=st.n_frames?Math.max(0,st.frame)/st.n_frames*100:0;
-    $('#rthud').textContent=`${S.mode==='cam'?'CAMERA':'LIVE'} · khung ${Math.max(st.frame,0)}${S.mode==='cam'?'':'/'+st.n_frames} · ${st.live_fps} FPS · bỏ ${st.dropped} khung · VLM chờ ${st.vlm_pending==null?0:st.vlm_pending}`}
+    $('#rthud').textContent=`LIVE · khung ${Math.max(st.frame,0)}/${st.n_frames} · ${st.live_fps} FPS · bỏ ${st.dropped} khung · VLM chờ ${st.vlm_pending==null?0:st.vlm_pending}`}
   renderAll()}
-async function runRealtime(src,camera=false){
-  const fd=new FormData();if(S.file&&!camera)fd.append('video',S.file);else fd.append('source',src);
-  fd.append('options',JSON.stringify({conf:+$('#conf').value,...pipeOpts(),realtime:true,camera}));
-  const tag=camera?'Camera':'Realtime';
-  setStatus(tag+': đang khởi động');logLine(camera?'Camera: chuẩn bị (tách hiện vật trên khung đầu tiên, có thể mất vài giây)…':'Realtime: gửi yêu cầu tới backend…');
+async function runRealtime(src,cam){
+  const fd=new FormData();if(!cam&&S.file)fd.append('video',S.file);else fd.append('source',src);
+  fd.append('options',JSON.stringify({conf:+$('#conf').value,realtime:true,camera:!!cam}));
+  setStatus('Realtime: đang khởi động');logLine('Realtime: gửi yêu cầu tới backend…');
   const id=await API.start(fd);S.jobId=id;
-  prepareLiveView(camera?(src.startsWith('push://')?'Camera máy':src.replace(/(:\/\/[^:\/@]+:)[^@]*@/,'$1***@')):(S.file?S.file.name:src));LIVE={id,after:0,meta:null,banner:null};const mine=LIVE;resetMap();mapLoop(id,()=>LIVE===mine);
+  prepareLiveView(cam?camChoice().name:(S.file?S.file.name:src));LIVE={id,after:0,meta:null,banner:null};const mine=LIVE;resetMap();mapLoop(id,()=>LIVE===mine);
   let stop=false;const img=$('#liveimg');
-  /* Luồng MJPEG: server đẩy từng khung ngay khi có (như dashboard cũ). Poll từng khung + sleep(120ms) chỉ được ~5-8 khung/s nên nhìn bị trễ. */
-  let streamFailed=false;
-  img.onerror=()=>{streamFailed=true};
-  img.src=API.base+`/api/jobs/${id}/live/stream?`+Date.now();
   const frames=(async()=>{while(!stop&&LIVE===mine){
-    if(streamFailed){   /* dự phòng: luồng không chạy được (proxy chặn...) thì poll từng khung như trước */
-      try{const u=await API.blob(id,'live');if(u&&LIVE===mine){const old=img.src;img.src=u;if(old&&old.startsWith('blob:'))URL.revokeObjectURL(old)}}catch{}
-      await sleep(60)}
-    else await sleep(200)}})();
-  const seen=new Set();let key=null,finSent=false;
+    try{const u=await API.blob(id,'live');if(u&&LIVE===mine){const old=img.src;img.src=u;if(old&&old.startsWith('blob:'))URL.revokeObjectURL(old)}}catch{}
+    await sleep(120)}})();
+  const seen=new Set();let key=null;
   try{for(;;){
-    if(S.cancel){
-      if(camera){   /* camera: Dừng = kết thúc thu rồi xử lý nốt để có kết quả (không bỏ) */
-        if(!finSent){finSent=true;logLine('Đang dừng camera và xử lý kết quả…');setStatus('Đang xử lý kết quả camera');await API.finish(id)}
-      }else{await API.cancel(id);stop=true;LIVE=null;return stopped()}
-    }
+    if(S.cancel){await API.cancel(id);stop=true;LIVE=null;return stopped()}
     const j=await API.job(id);
     stageLine(j,seen);
-    if((j.stage>=3||j.status==='done')&&!finSent)setStatus(tag+' · LIVE');
+    if(j.stage>=3||j.status==='done')setStatus('Realtime · LIVE');
     let le=null;try{le=await(await API.f(`/api/jobs/${id}/live/events?after=${mine.after}`)).json()}catch{}
     if(le&&LIVE===mine)applyLive(le);
     if(j.status==='done'){key=j.key;break}
@@ -473,19 +457,14 @@ async function runRealtime(src,camera=false){
   const res=await API.result(id),imgs={};
   await Promise.all(res.events.filter(e=>e.task).map(async e=>{imgs[e.event_id]=await API.blob(id,`files/${key}/vlm_inputs/${e.task}/sheet.jpg`)}));
   const videoURL=await API.blob(id,'video');S.progress=100;
-  /* Giữ khung cuối (đã vẽ khung đỏ nếu có cảnh báo) vài giây trước khi chuyển sang xem lại, như dashboard cũ (alarm_show_sec) */
-  if(LIVE===mine&&(res.alerts||[]).length&&(camera||!S.cancel)){
-    try{const u=await API.blob(id,'live');if(u){const old=img.src;img.src=u;if(old&&old.startsWith('blob:'))URL.revokeObjectURL(old)}}catch{}
-    const hold=Math.max(0,+PIPE.alarm_show_sec||4);
-    setStatus('Có cảnh báo');logLine(`Xong — giữ khung cảnh báo ${hold}s rồi chuyển sang xem lại.`);
-    for(let t=0;t<hold*10&&(camera||!S.cancel)&&LIVE===mine;t++)await sleep(100)}
   await pollMap(id,()=>true,true);
-  loadData(fromResult(res,e=>imgs[e.event_id]),videoURL,{liveVideo:false,name:S.file?S.file.name:(camera?undefined:(src.split(/[\/]/).pop()||undefined))});
-  setStatus('Hoàn tất');logLine(camera?'Hoàn tất camera: đã thay danh sách tạm bằng kết quả cuối.':'Hoàn tất realtime: đã thay danh sách tạm bằng kết quả cuối.')}
-async function runDemoRealtime(){
-  setStatus('Realtime (mô phỏng)');logLine('Chế độ demo: mô phỏng realtime, cảnh báo hiện dần theo thời gian video.');
+  loadData(fromResult(res,e=>imgs[e.event_id]),videoURL,{liveVideo:false,name:S.file?S.file.name:(src.split(/[\/]/).pop()||undefined)});
+  setStatus('Hoàn tất');logLine('Hoàn tất realtime: đã thay danh sách tạm bằng kết quả cuối.')}
+async function runDemoRealtime(cam){
+  if(cam){S.videoURL=null;vid.removeAttribute('src')}
+  setStatus(cam?'Camera (mô phỏng)':'Realtime (mô phỏng)');logLine('Chế độ demo: mô phỏng realtime, cảnh báo hiện dần theo thời gian video.');
   const dur=S.videoURL&&vid.duration?Math.round(vid.duration)||60:60;
-  loadData(makeMock(dur),S.videoURL,{name:S.file?S.file.name:'Dữ liệu mẫu'});
+  loadData(makeMock(dur),S.videoURL,{name:cam?camChoice().name:(S.file?S.file.name:'Dữ liệu mẫu')});
   S.liveSim=true;S.progress=0;S.t=0;if(S.videoURL)vid.currentTime=0;setPlaying(true);renderAll();
   while(S.t<D-.05&&!S.cancel){S.progress=S.t/D*100;renderAll();await sleep(500)}
   setPlaying(false);
@@ -496,49 +475,18 @@ function setMode(m){S.mode=m;try{localStorage.setItem('ef_mode',m)}catch{}
   applySourceUI();renderCalBox()}
 $('#modeSel').onclick=e=>{const b=e.target.closest('[data-mode]');if(b&&!S.running)setMode(b.dataset.mode)};
 
-/* Camera: webcam của trình duyệt (đẩy khung JPEG qua WebSocket lên server) hoặc camera IP RTSP (server tự đọc) */
-async function runCamera(){
-  const kind=$('#camKind').value;let src='',cleanup=()=>{};
-  try{
-    if(kind==='rtsp'){
-      src=$('#rtspUrl').value.trim();
-      if(!/^(rtsps?|rtmps?):\/\//i.test(src)){setStatus('Chưa có URL camera');logLine('Chưa có URL: nhập dạng rtsp://user:pass@ip:554/stream');return}
-      try{localStorage.setItem('ef_rtsp',src)}catch{}
-    }else{
-      if(!navigator.mediaDevices||!window.isSecureContext){
-        setStatus('Không bật được camera máy');
-        logLine('Trình duyệt chỉ cho bật camera trên HTTPS hoặc localhost. Cách 1: mở web ở máy bạn bằng `python web/serve.py` (http://127.0.0.1:8765) rồi đặt URL server ở Settings. Cách 2: chrome://flags/#unsafely-treat-insecure-origin-as-secure, thêm địa chỉ trang này rồi khởi động lại Chrome.');return}
-      setStatus('Đang xin quyền camera…');
-      let stream;
-      try{stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},frameRate:{ideal:15}},audio:false})}
-      catch(e){setStatus('Không bật được camera máy');logLine('Không mở được camera máy: '+(e.name==='NotAllowedError'?'bạn chưa cho phép truy cập camera':e.message));return}
-      const sess=await (await API.f('/api/camera/session',{method:'POST'})).json();
-      const ws=new WebSocket((API.base||location.origin).replace(/^http/,'ws')+sess.ws);ws.binaryType='arraybuffer';
-      cleanup=()=>{try{ws.close()}catch{};stream.getTracks().forEach(t=>t.stop())};
-      await new Promise((ok,bad)=>{ws.onopen=ok;ws.onerror=()=>bad(new Error('Không kết nối được WebSocket tới server'));setTimeout(()=>bad(new Error('WebSocket quá thời gian')),8000)});
-      const v=document.createElement('video');v.srcObject=stream;v.muted=true;v.playsInline=true;await v.play();
-      const FPS=15,MAXW=960,sc=Math.min(1,MAXW/(v.videoWidth||MAXW)),cv=document.createElement('canvas');
-      cv.width=Math.round((v.videoWidth||MAXW)*sc);cv.height=Math.round((v.videoHeight||540)*sc);const c2=cv.getContext('2d');
-      const timer=setInterval(()=>{
-        if(ws.readyState!==1||ws.bufferedAmount>1500000)return;          /* mạng chậm: bỏ khung thay vì dồn hàng đợi */
-        c2.drawImage(v,0,0,cv.width,cv.height);cv.toBlob(b=>{if(b&&ws.readyState===1)ws.send(b)},'image/jpeg',0.75)},1000/FPS);
-      const c0=cleanup;cleanup=()=>{clearInterval(timer);c0()};
-      src=`push://${sess.sid}?fps=${FPS}`;
-    }
-    await runRealtime(src,true);
-  }finally{cleanup()}
-}
 async function startAnalysis(){
   if(S.running)return;
-  const cam=S.mode==='cam',multi=S.mode==='multi',src=$('#src').value.trim();
-  if(!cam&&!multi&&!S.file&&!src){setStatus('Chưa có video');logLine('Chưa có video: bấm Upload hoặc nhập đường dẫn / URL.');return}
+  const cam=camMode(),src=cam?camChoice().url:$('#src').value.trim();
+  if(cam&&!src&&!CFG.demo){setStatus('Chưa có URL camera');logLine('Camera chưa có URL: vào Settings → Camera để nhập (vd. rtsp://...).');return}
+  if(!cam&&!S.file&&!src){setStatus('Chưa có video');logLine('Chưa có video: bấm Upload hoặc nhập đường dẫn / URL.');return}
   S.cancel=false;S.progress=0;setBusy(true);renderKpis();
   try{
-    if(API.ok&&!cam&&!multi&&S.mode==='batch'&&S.files.length>=1&&($('#siteSel')&&$('#siteSel').value||calOn()))await runSite(S.files,$('#siteSel').value||'__custom__');
-    else if(API.ok&&!cam&&!multi&&S.mode==='batch'&&S.files.length>1)await runMultiBatch(S.files);
-    else if(API.ok)await(multi?runMulti():cam?runCamera():S.mode==='rt'?runRealtime(src):runLive(src));
-    else if(CFG.demo&&!multi)await(S.mode==='rt'?runDemoRealtime():runDemo());
-    else{setStatus('Mất kết nối');logLine('Chưa kết nối được server. Kiểm tra server còn chạy (Settings → Server).')}
+    if(API.ok&&!cam&&S.mode==='batch'&&S.files.length>=1&&($('#siteSel').value||calOn()))await runSite(S.files,$('#siteSel').value||'__custom__');
+    else if(API.ok&&!cam&&S.mode==='batch'&&S.files.length>1)await runMulti(S.files);
+    else if(API.ok)await(S.mode==='rt'?runRealtime(src,cam):runLive(src));
+    else if(CFG.demo)await(S.mode==='rt'?runDemoRealtime(cam):runDemo());
+    else{setStatus('Mất kết nối');logLine('Chưa kết nối backend. Vào Settings để nhập URL.')}
   }catch(err){logLine('LỖI: '+err.message);setStatus('Lỗi')}
   finally{setBusy(false);pollSystem()}}
 
@@ -551,7 +499,7 @@ function renderCamTabs(){const el=$('#camTabs');el.hidden=CAMRES.length<2;
 function showCam(i){const c=CAMRES[i];if(!c)return;CAMIDX=i;MAP=c.map;
   loadData(c.data,c.videoURL,{liveVideo:true,name:c.name});S.srcName=c.name;renderKpis();renderCamTabs()}
 $('#camTabs').onclick=e=>{const b=e.target.closest('[data-cam]');if(b&&!S.running)showCam(+b.dataset.cam)};
-async function runMultiBatch(files){
+async function runMulti(files){
   CAMRES=[];CAMIDX=-1;renderCamTabs();
   for(let i=0;i<files.length;i++){
     if(S.cancel)break;
@@ -1044,10 +992,10 @@ $('#runBtn').onclick=startAnalysis;
 $('#stopBtn').onclick=()=>{S.cancel=true;logLine('Đang dừng…')};
 
 /* ---------- Điều khiển giao diện ---------- */
-function setView(v){['dash','set'].forEach(k=>$('#v-'+k).hidden=k!==v);$$('#tabs .tab').forEach(b=>b.classList.toggle('on',b.dataset.view===v));if(v==='dash'&&typeof redrawAnalyticsCharts==='function')requestAnimationFrame(redrawAnalyticsCharts);if(v==='set'&&!TSCHEMA&&API.ok)loadTuningSchema()}
+function setView(v){['dash','set'].forEach(k=>$('#v-'+k).hidden=k!==v);$$('#tabs .tab').forEach(b=>b.classList.toggle('on',b.dataset.view===v));if(v==='dash'&&typeof redrawAnalyticsCharts==='function')requestAnimationFrame(redrawAnalyticsCharts)}
 $('#tabs').onclick=e=>{const b=e.target.closest('[data-view]');if(b)setView(b.dataset.view)};
 $('#beChip').onclick=()=>setView('set');
-$('#refreshBtn').onclick=()=>API.ping().then(loadCores);
+$('#refreshBtn').onclick=()=>API.ping();
 $('#play').onclick=()=>{if(S.t>=D-.05)seek(0);setPlaying(!S.playing)};
 $('#speed').onchange=e=>{S.speed=+e.target.value;vid.playbackRate=S.speed};
 $('#layers').onclick=e=>{const b=e.target.closest('[data-l]');if(!b)return;S.layers[b.dataset.l]=!S.layers[b.dataset.l];b.classList.toggle('on')};
@@ -1056,8 +1004,8 @@ $('#filters').onclick=e=>{const b=e.target.closest('[data-f]');if(!b)return;S.fi
 $('#alerts').onclick=e=>{const sk=e.target.closest('[data-seek]');if(sk){seek(+sk.dataset.seek);return}
   const rv=e.target.closest('[data-rv]');if(rv){const ev=DATA.events.find(x=>x.id==rv.dataset.id);if(ev){ev.review=rv.dataset.rv;renderAlerts()}}};
 $('#csvBtn').onclick=()=>{
-  const rows=[['id','bat_dau_s','ket_thuc_s','khach','hien_vat','hanh_vi','quyet_dinh','tin_cay','ghi_chu_vlm','camera']];
-  DATA.events.forEach(e=>{const a=DATA.arts.find(a=>a.id===e.art);rows.push([e.id,e.start.toFixed(2),e.end.toFixed(2),e.track,a?a.name:e.art,e.behavior,e.decision,e.conf==null?'':e.conf,e.reason,e.cam||''])});
+  const rows=[['id','bat_dau_s','ket_thuc_s','khach','hien_vat','hanh_vi','quyet_dinh','tin_cay','ghi_chu_vlm']];
+  DATA.events.forEach(e=>{const a=DATA.arts.find(a=>a.id===e.art);rows.push([e.id,e.start.toFixed(2),e.end.toFixed(2),e.track,a?a.name:e.art,e.behavior,e.decision,e.conf==null?'':e.conf,e.reason])});
   const csv='﻿'+rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='exhibitflow_alerts.csv';a.click()};
 document.addEventListener('keydown',e=>{if(e.code==='Space'&&!$('#v-dash').hidden&&!/SELECT|INPUT|BUTTON|TEXTAREA/.test(e.target.tagName)){e.preventDefault();$('#play').click()}});
@@ -1068,211 +1016,32 @@ $('#beBtn').onclick=async()=>{API.base=$('#beUrl').value.trim().replace(/\/+$/,'
 $('#beOff').onclick=async()=>{API.base='';$('#beUrl').value='';try{localStorage.removeItem('ef_api')}catch{}await API.ping()};
 $('#conf').oninput=e=>$('#confV').textContent=(+e.target.value).toFixed(2);
 
-/* ---------- Cấu hình pipeline (giống Settings của dashboard cũ; lưu trong trình duyệt, gửi kèm mỗi lần chạy) ---------- */
-const PIPE_DEF={multi_parallel:true,multi_max_parallel:2,camera_max_min:30,pipeline_mode:'full',tracker_process:true,hand_process:true,pose_process:true,pose_gpu_preproc:false,hand_batch:true,drop_frames:true,limit_cpu_threads:false,alarm_show_sec:4,
-  tracker_threads:1,hand_threads:1,pose_threads:4,queue_size:8,pose_gate_norm_dist:1.5,tuning:{}};
-const PIPE=(()=>{try{return{...PIPE_DEF,...JSON.parse(localStorage.getItem('ef_pipe2')||'{}')}}catch{return{...PIPE_DEF}}})();
-if(!PIPE.tuning||typeof PIPE.tuning!=='object'||Array.isArray(PIPE.tuning))PIPE.tuning={};
-const pipeOpts=()=>({...PIPE,tuning:{...(PIPE.tuning||{})}});
-Object.keys(PIPE_DEF).forEach(k=>{if(k==='tuning')return;const el=$('#p-'+k);if(!el)return;
-  if(el.tagName==='SELECT'){el.value=PIPE[k];if(el.value!==PIPE[k])el.value=PIPE_DEF[k];el.onchange=()=>{PIPE[k]=el.value;savePipe()}}
-  else if(el.type==='checkbox'){el.checked=!!PIPE[k];el.onchange=()=>{PIPE[k]=el.checked;savePipe()}}
-  else{el.value=PIPE[k];el.oninput=()=>{let v=parseFloat(el.value);
-    if(k.endsWith('_threads')&&!isNaN(v)&&CORES.n)v=Math.min(Math.max(1,Math.round(v)),CORES.n); /* không cho vượt số nhân khả dụng */
-    PIPE[k]=isNaN(v)?PIPE_DEF[k]:v;savePipe();checkThreads()}}});
-Object.keys(PIPE_DEF).forEach(k=>{if(k.endsWith('_process'))$('#p-'+k).addEventListener('change',checkThreads)});
-function savePipe(){try{localStorage.setItem('ef_pipe2',JSON.stringify(PIPE))}catch{}}
-
-/* ---------- Tham số tinh chỉnh động từ /api/tuning/schema ---------- */
-let TSCHEMA=null;
-function syncTuningInputs(){
-  if(!TSCHEMA)return;
-  const t=PIPE.tuning||{};
-  (TSCHEMA.params||[]).forEach(p=>{
-    const el=document.getElementById('t-'+p.key);if(!el)return;
-    el.classList.remove('err');
-    const has=Object.prototype.hasOwnProperty.call(t,p.key)&&t[p.key]!=null&&t[p.key]!=='';
-    if(p.type==='bool')el.checked=has?!!t[p.key]:!!p.default;
-    else el.value=has?t[p.key]:p.default;
-  });
-}
-function resetTuningGroup(gid){
-  if(!TSCHEMA)return;
-  (TSCHEMA.params||[]).filter(p=>!gid||p.group===gid).forEach(p=>{delete PIPE.tuning[p.key]});
-  savePipe();syncTuningInputs();
-}
-function renderTuningSchema(schema){
-  const box=$('#tuningGroups');if(!box)return;
-  if(!schema||!schema.groups){box.innerHTML='<p class="note">Không tải được danh sách tham số tinh chỉnh.</p>';return}
-  const byG={};(schema.params||[]).forEach(p=>{(byG[p.group]=byG[p.group]||[]).push(p)});
-  const byK=Object.fromEntries((schema.params||[]).map(p=>[p.key,p]));
-  box.innerHTML=(schema.groups||[]).map(g=>{
-    const ps=byG[g.id]||[];
-    const items=ps.map(p=>{
-      const defTxt=p.type==='bool'?(p.default?'Bật':'Tắt'):String(p.default);
-      const rb=p.needs_reload?'<span class="tbadge">Nạp lại model</span>':'';
-      if(p.type==='bool'){
-        return `<div class="titem"><div class="chk"><input type="checkbox" id="t-${esc(p.key)}" data-tkey="${esc(p.key)}"><label for="t-${esc(p.key)}">${esc(p.label_vi)} <span class="tdef">(mặc định: ${esc(defTxt)})</span> ${rb}</label></div><small>${esc(p.help_vi)}</small></div>`;
-      }
-      const attrs=[p.min!=null?`min="${p.min}"`:'',p.max!=null?`max="${p.max}"`:'',`step="${p.step!=null?p.step:(p.type==='int'?1:'any')}"`,`placeholder="${esc(defTxt)}"`].filter(Boolean).join(' ');
-      return `<div class="titem"><label for="t-${esc(p.key)}">${esc(p.label_vi)} <span class="tdef">(mặc định: ${esc(defTxt)})</span> ${rb}</label><input type="number" class="txt" id="t-${esc(p.key)}" data-tkey="${esc(p.key)}" ${attrs}><small>${esc(p.help_vi)}</small></div>`;
-    }).join('');
-    return `<div class="tgroup" data-tgroup="${esc(g.id)}">
-      <div class="tgroup-hd"><b>${esc(g.title)}</b>${g.needs_reload?'<span class="tbadge">Nạp lại model</span>':''}<span class="sp"></span>
-        <button class="btn sm" type="button" data-treset="${esc(g.id)}">Khôi phục mặc định</button></div>
-      <div class="tgroup-desc">${esc(g.description||'')}</div>
-      <div class="tgrid">${items}</div></div>`;
-  }).join('');
-  syncTuningInputs();
-  box.onclick=e=>{const b=e.target.closest('[data-treset]');if(b)resetTuningGroup(b.dataset.treset)};
-  box.oninput=e=>{
-    const el=e.target.closest('[data-tkey]');if(!el)return;
-    const p=byK[el.dataset.tkey];if(!p)return;
-    if(p.type==='bool'){
-      if(el.checked===!!p.default)delete PIPE.tuning[p.key];
-      else PIPE.tuning[p.key]=el.checked;
-      savePipe();return;
-    }
-    const raw=el.value.trim();
-    if(raw===''){el.classList.remove('err');delete PIPE.tuning[p.key];savePipe();return}
-    const v=Number(raw);
-    const bad=!Number.isFinite(v)||(p.type==='int'&&!Number.isInteger(v))||(p.min!=null&&v<p.min)||(p.max!=null&&v>p.max);
-    el.classList.toggle('err',bad);
-    if(bad)return;
-    if(v===Number(p.default))delete PIPE.tuning[p.key];
-    else PIPE.tuning[p.key]=v;
-    savePipe();
-  };
-}
-async function loadTuningSchema(){
-  try{TSCHEMA=await API.tuningSchema();renderTuningSchema(TSCHEMA)}
-  catch{const box=$('#tuningGroups');if(box&&!TSCHEMA)box.innerHTML='<p class="note">Kết nối server để tải danh sách tham số tinh chỉnh.</p>'}
-}
-if($('#tuningResetAll'))$('#tuningResetAll').onclick=()=>resetTuningGroup(null);
-/* Số nhân CPU khả dụng của server (đã trừ hạn mức container) để chỉnh số luồng cho hợp lý */
-const CORES={n:0,logical:0,quota:0};
-function checkThreads(){
-  const w=$('#coreWarn');if(!w||!CORES.n)return;
-  const used=(PIPE.tracker_process?PIPE.tracker_threads:0)+(PIPE.hand_process?PIPE.hand_threads:0)+(PIPE.pose_process?PIPE.pose_threads:0);
-  const procs=['tracker','hand','pose'].filter(k=>PIPE[k+'_process']).length;
-  /* tiến trình chính + llama-server + tiến trình riêng luôn cần thêm nhân: đừng đặt tổng luồng quá ~1/2 số nhân */
-  const cap=Math.max(1,Math.floor(CORES.n/2));
-  w.hidden=false;
-  w.className='note'+(used>cap?' err':'');
-  w.textContent=`Tổng luồng đang đặt cho ${procs} tiến trình riêng: ${used} / ${CORES.n} nhân.`+(used>cap?` Cao hơn ~1/2 số nhân: các stage sẽ tranh CPU với nhau, nên giảm bớt.`:' Hợp lý.')}
-async function loadCores(){
-  try{const c=(await API.system()).cores||{};CORES.n=c.usable||c.logical||0;CORES.logical=c.logical||0;CORES.quota=c.quota||0;
-    const el=$('#coreInfo');if(!el||!CORES.n)return;
-    el.textContent=`CPU khả dụng cho server: ${CORES.n} nhân (đã trừ phần container không cho dùng). Số luồng mỗi tiến trình không được vượt số này.`;
-    ['tracker','hand','pose'].forEach(k=>{const el2=$('#p-'+k+'_threads');if(el2){el2.max=CORES.n;if(+el2.value>CORES.n){el2.value=CORES.n;PIPE[k+'_threads']=CORES.n;savePipe()}}});
-    checkThreads()}catch{}}
+/* ---------- Camera (Realtime) ---------- */
+let CAMS=(()=>{try{const v=JSON.parse(localStorage.getItem('ef_cams')||'null');if(Array.isArray(v)&&v.length)return v}catch{}return[{name:'CAM 1 · Sảnh chính',url:''},{name:'CAM 2 · Phòng gốm',url:''}]})();
+const saveCams=()=>{try{localStorage.setItem('ef_cams',JSON.stringify(CAMS))}catch{}};
+const camMode=()=>S.mode==='rt';          // Realtime = camera
+function camChoice(){const v=$('#camSel').value;if(v==='__url')return{name:'Camera (URL)',url:$('#camUrl').value.trim()};return CAMS[+v.slice(1)]||{name:'Camera',url:''}}
+function renderCams(){
+  const cur=$('#camSel').value;
+  $('#camSel').innerHTML=CAMS.map((c,i)=>`<option value="c${i}">${esc(c.name)}</option>`).join('')+'<option value="__url">Nhập URL khác…</option>';
+  if([...$('#camSel').options].some(o=>o.value===cur))$('#camSel').value=cur;
+  $('#camList').innerHTML=CAMS.map((c,i)=>`<div class="camrow"><b>${esc(c.name)}</b><small>${esc(c.url||'chưa có URL')}</small><button class="btn sm" data-del="${i}">Xóa</button></div>`).join('')||'<p class="note">Chưa có camera.</p>';
+  applySourceUI()}
 function applySourceUI(){
-  const cam=S.mode==='cam',multi=S.mode==='multi';
-  $('#srcFile').hidden=cam||multi;$('#srcCam').hidden=!cam;$('#rtspUrl').hidden=!(cam&&$('#camKind').value==='rtsp');
-  $('#multiBox').hidden=!multi;if(!multi)$('#multiStat').hidden=true;
-  $('#runBtn').textContent=multi?'Bật multi-camera':cam?'Bật camera':S.mode==='rt'?'Bắt đầu':'Phân tích';
-  $('#vtitle').textContent=multi?'Multi-camera':cam?'Camera trực tiếp':S.mode==='rt'?'Video realtime':'Video phân tích'}
-$('#camKind').onchange=applySourceUI;
-try{$('#rtspUrl').value=localStorage.getItem('ef_rtsp')||''}catch{}
-
-/* ---------- Multi-Camera: 2-8 camera chạy TUẦN TỰ trên server (xem exhibitflow/multicam.py) ---------- */
-const MCAM={min:2,max:8};
-let MROWS=[];                       /* [{name, source, file}]: file chỉ giữ trong bộ nhớ, không lưu localStorage */
-let MPICK=-1;                       /* dòng đang chọn file */
-let MSEL=null;                      /* camera người dùng bấm để xem trực tiếp (null = camera đang chạy đầu tiên) */
-const MSTAT_TXT={pending:'chờ tới lượt',running:'đang chạy',done:'xong',error:'lỗi',skipped:'bỏ qua'};
-function saveMulti(){try{localStorage.setItem('ef_multi',JSON.stringify(MROWS.map(r=>({name:r.name,source:r.source}))))}catch{}}
-function renderMultiRows(){
-  const box=$('#multiRows');box.innerHTML='';
-  MROWS.forEach((r,i)=>{
-    const row=document.createElement('div');row.className='mrow';
-    const idx=document.createElement('span');idx.className='midx';idx.textContent=i+1;
-    const nm=document.createElement('input');nm.className='txt mname';nm.placeholder='Tên camera';nm.maxLength=40;nm.value=r.name;
-    nm.oninput=()=>{r.name=nm.value;saveMulti()};
-    const fn=document.createElement('span');fn.className='mfname';fn.textContent=r.file?r.file.name:'';
-    const sc=document.createElement('input');sc.className='txt msrc';sc.spellcheck=false;sc.value=r.source;
-    sc.placeholder='rtsp://user:pass@ip:554/stream, hoặc đường dẫn / URL video';
-    sc.oninput=()=>{r.source=sc.value;if(r.file){r.file=null;fn.textContent=''}saveMulti()};
-    const pick=document.createElement('button');pick.className='btn sm';pick.textContent='Chọn file';pick.title='Upload video từ máy thay cho nguồn';
-    pick.onclick=()=>{MPICK=i;$('#multiFile').click()};
-    const del=document.createElement('button');del.className='btn sm';del.textContent='Xoá';del.disabled=MROWS.length<=MCAM.min;
-    del.onclick=()=>{MROWS.splice(i,1);saveMulti();renderMultiRows()};
-    row.append(idx,nm,sc,pick,fn,del);box.append(row)});
-  $('#multiAdd').disabled=MROWS.length>=MCAM.max;
-  $('#multiNote').textContent=`${MROWS.length} camera (tối thiểu ${MCAM.min}, tối đa ${MCAM.max}). Camera IP chạy mỗi lượt tối đa theo "thời lượng tối đa" ở Settings, rồi chuyển sang camera kế tiếp.`}
-function loadMulti(){let a=[];try{a=JSON.parse(localStorage.getItem('ef_multi')||'[]')}catch{a=[]}
-  MROWS=(Array.isArray(a)?a:[]).filter(x=>x&&typeof x==='object').slice(0,MCAM.max).map(x=>({name:String(x.name||''),source:String(x.source||''),file:null}));
-  while(MROWS.length<MCAM.min)MROWS.push({name:'',source:'',file:null});
-  renderMultiRows()}
-$('#multiAdd').onclick=()=>{if(MROWS.length<MCAM.max){MROWS.push({name:'',source:'',file:null});saveMulti();renderMultiRows()}};
-$('#multiFile').onchange=e=>{const f=e.target.files[0];e.target.value='';if(f&&MROWS[MPICK]){MROWS[MPICK].file=f;MROWS[MPICK].source='';saveMulti();renderMultiRows()}};
-function multiForm(){
-  const fd=new FormData(),cams=[];
-  MROWS.forEach((r,i)=>{
-    const src=r.source.trim();
-    if(!r.file&&!src)throw new Error(`Camera ${i+1} chưa có nguồn (URL RTSP, đường dẫn hoặc file)`);
-    cams.push({name:r.name.trim()||(r.file?r.file.name:`Camera ${i+1}`),source:r.file?'':src});
-    if(r.file)fd.append('video_'+i,r.file)});
-  fd.append('cameras',JSON.stringify(cams));
-  return fd}
-function renderMultiStat(m){const el=$('#multiStat');el.hidden=false;el.innerHTML='';
-  m.cams.forEach(c=>{const d=document.createElement('div');d.className='mst '+c.status+(MSEL===c.idx?' sel':'');
-    d.title=c.job_id?'Bấm để xem trực tiếp camera này':'';d.onclick=()=>{MSEL=c.idx;renderMultiStat(m)};
-    d.textContent=`${c.idx+1}. ${c.name}: ${MSTAT_TXT[c.status]||c.status}${c.n_alerts?` · ${c.n_alerts} cảnh báo`:''}${c.error?` · ${c.error}`:''}`;el.append(d)})}
-/* Cảnh báo đang có (mọi camera) -> danh sách; giữ trạng thái "đã xác nhận / bỏ qua" theo khoá (camera|khách|thời điểm) */
-function setMultiLive(m){
-  const old=new Map(DATA.events.map(e=>[e.key,e]));
-  DATA.events=m.alerts.map((a,i)=>{const key=`${a.camera}|${a.track}|${a.t_s}|${a.behavior}`,o=old.get(key);
-    return{id:'L'+i,key,track:a.track,art:a.art,start:a.t_s||0,end:(a.t_s||0)+1,behavior:a.behavior,decision:'ANOMALY',conf:a.confidence,
-      reason:a.evidence||'VLM kết luận có hành vi bất thường.',review:o?o.review:null,img:o?o.img:null,cam:a.camera}});
-  const nrun=(m.running||[]).length;
-  $('#rthud').textContent=`MULTI · ${nrun} camera đang chạy · ${m.alerts.length} cảnh báo`;
-  renderAll()}
-async function runMulti(){
-  let fd;try{fd=multiForm()}catch(e){setStatus('Chưa đủ nguồn');logLine(e.message);return}
-  fd.append('options',JSON.stringify({conf:+$('#conf').value,...pipeOpts(),realtime:true}));
-  setStatus('Multi-camera: khởi động');logLine(`Multi-camera: gửi ${MROWS.length} camera tới backend…`);
-  MSEL=null;
-  const mid=(await(await API.f('/api/multi-jobs',{method:'POST',body:fd})).json()).multi_id;S.jobId=mid;
-  prepareLiveView(`Multi-camera · ${MROWS.length} camera`);$('#rthud').textContent='MULTI · đang khởi động…';
-  LIVE={id:mid,after:0,meta:null,banner:null};
-  const img=$('#liveimg');let curJid=null,m=null,sentStop=false;
-  try{
-    for(;;){
-      if(S.cancel&&!sentStop){sentStop=true;logLine('Đang dừng: camera đang chạy được xử lý nốt, các camera còn lại bỏ qua…');setStatus('Đang xử lý kết quả');
-        await API.f(`/api/multi-jobs/${mid}/finish`,{method:'POST'}).catch(()=>{})}
-      m=await(await API.f(`/api/multi-jobs/${mid}`)).json();
-      /* Khung trực tiếp: camera người dùng chọn (nếu đã có job), không thì camera đang chạy đầu tiên */
-      const sel=(MSEL!=null&&m.cams[MSEL]&&m.cams[MSEL].job_id)?m.cams[MSEL]:null;
-      const c=sel||(m.cur!=null?m.cams[m.cur]:null);
-      if(c&&c.job_id&&c.job_id!==curJid){curJid=c.job_id;img.src=API.base+`/api/jobs/${curJid}/live/stream?`+Date.now();logLine(`Xem trực tiếp ${c.name}`)}
-      renderMultiStat(m);setMultiLive(m);
-      if(m.status!=='running')break;
-      await sleep(1000)}
-  }finally{if(LIVE&&LIVE.id===mid)LIVE=null}
-  const parts=await(await API.f(`/api/multi-jobs/${mid}/results`)).json();
-  if(!parts.length){resetData();setStatus(m.status==='error'?'Lỗi':'Đã dừng');
-    logLine(m.cams.map(c=>`${c.name}: ${MSTAT_TXT[c.status]||c.status}${c.error?' — '+c.error:''}`).join(' | '));return}
-  /* Gộp kết quả: id và hiện vật thêm tiền tố camera để không trùng; cảnh báo mang nhãn camera. Không có video xem lại (nhiều nguồn) */
-  const arts=[],events=[];let dur=0;
-  for(const c of parts){
-    const res=c.result,imgs={};
-    await Promise.all(res.events.filter(e=>e.task).map(async e=>{imgs[e.event_id]=await API.blob(c.job_id,`files/${c.key}/vlm_inputs/${e.task}/sheet.jpg`)}));
-    const d=fromResult(res,e=>imgs[e.event_id]);
-    arts.push(...d.arts.map(a=>({...a,id:`${c.idx}.${a.id}`,name:`${a.name} · ${c.name}`})));
-    events.push(...d.events.map(e=>({...e,id:`${c.idx}.${e.id}`,art:e.art==null?null:`${c.idx}.${e.art}`,cam:c.name})));
-    dur=Math.max(dur,d.meta.duration||0)}
-  S.progress=100;
-  loadData({real:true,raw:null,meta:{sequence_id:'multi-'+mid,camera_id:`${parts.length} camera`,duration:dur||60,fps:25,width:960,height:540,nw:960},arts,tracks:[],events},null,{name:`Multi-camera (${parts.length} camera)`});
-  setStatus(m.status==='error'?'Hoàn tất (có camera lỗi)':'Hoàn tất');
-  logLine('Hoàn tất multi-camera: '+m.cams.map(c=>`${c.name} ${MSTAT_TXT[c.status]||c.status}`).join(', ')+'. Multi-camera không có video xem lại; cảnh báo có nhãn camera.')}
+  const rt=S.mode==='rt',cam=camMode();
+  $('#srcFile').hidden=cam;$('#srcCam').hidden=!cam;$('#camUrl').hidden=!(cam&&$('#camSel').value==='__url');
+  $('#runBtn').textContent=rt?'Bắt đầu':'Phân tích';
+  $('#vtitle').textContent=cam?`Camera realtime — ${camChoice().name}`:'Video phân tích — CAM 1'}
+$('#camSel').onchange=applySourceUI;
+$('#camAdd').onclick=()=>{const name=$('#camName').value.trim(),url=$('#camAddUrl').value.trim();if(!name)return;CAMS.push({name,url});saveCams();$('#camName').value='';$('#camAddUrl').value='';renderCams()};
+$('#camList').onclick=e=>{const b=e.target.closest('[data-del]');if(!b)return;CAMS.splice(+b.dataset.del,1);saveCams();renderCams()};
 
 /* ---------- Khởi động ---------- */
-resetData();renderSystem();setStatus('Chưa chạy');loadMulti();setMode(S.mode);
+resetData();renderSystem();setStatus('Chưa chạy');renderCams();setMode(S.mode);
 logLine('Sẵn sàng.'+(CFG.demo?' Chế độ demo: chưa kết nối backend thì kết quả là dữ liệu mẫu.':''));
 setInterval(()=>{$('#clock').textContent=new Date().toLocaleString('vi-VN')},1000);$('#clock').textContent=new Date().toLocaleString('vi-VN');
 setInterval(pollSystem,3000);
-API.ping().then(loadCores);requestAnimationFrame(tick);
+API.ping();requestAnimationFrame(tick);
 
 /* ---------- Ngăn kéo menu ---------- */
 (()=>{const app=$('.app'),btn=$('#menuBtn'),scrim=$('#scrim');

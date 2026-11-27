@@ -99,7 +99,3 @@ html,body{background:var(--bg);color:var(--text)}
 
 /* chỉ còn danh sách cảnh báo ở hàng dưới */
 .grid2{grid-template-columns:1fr}
-
-/* khung Settings (tham số pipeline) trên nền trắng */
-.tgroup{background:var(--panel2);border-color:var(--line)}
-.tbadge{background:#FFF6E0;color:var(--warn);border-color:#EBCB80}

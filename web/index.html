@@ -7,21 +7,6 @@
 <link rel="stylesheet" href="css/style.css">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@800;900&display=swap">
-<style>
-.tgroup{border:1px solid var(--line);border-radius:6px;padding:12px 14px;margin-bottom:12px;background:rgba(13,18,23,.55)}
-.tgroup-hd{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px}
-.tgroup-hd b{font-size:13.5px}
-.tgroup-desc{color:var(--muted);font-size:12px;margin-bottom:10px}
-.tgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
-.titem{display:flex;flex-direction:column;gap:4px}
-.titem label{font-size:12.5px;font-weight:550;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.titem .chk{display:flex;align-items:center;gap:8px}
-.titem .chk label{margin:0;cursor:pointer}
-.titem small{color:var(--muted);font-size:11.5px;line-height:1.4}
-.tdef{color:var(--muted);font-size:11.5px;font-weight:400}
-.tbadge{display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:600;background:rgba(255,176,32,.16);color:#FFCB66;border:1px solid rgba(255,176,32,.35)}
-.titem input.err{border-color:#E5524A}
-</style>
 <link rel="stylesheet" href="css/theme-light.css">
 </head>
 <body>
@@ -57,7 +42,7 @@
   <div class="grid">
     <div class="col">
       <div class="card">
-        <h3><span id="vtitle">Video phân tích</span> <span class="sp"></span><div class="filters" id="modeSel" title="Video: chạy hết video rồi hiện kết quả. Realtime: chạy đúng nhịp fps, cảnh báo hiện dần. Camera: webcam của máy hoặc camera RTSP, chạy liên tục tới khi bấm Dừng. Multi-Camera: 2-8 camera chạy tuần tự, cảnh báo gộp theo camera"><button class="tg on" data-mode="batch">Video</button><button class="tg" data-mode="rt">Realtime</button><button class="tg" data-mode="cam">Camera</button><button class="tg" data-mode="multi">Multi-Camera</button></div><span class="vstat" id="vstat">Chưa chạy</span></h3>
+        <h3><span id="vtitle">Video phân tích — CAM 1</span> <span class="sp"></span><div class="filters" id="modeSel" title="Video: chạy hết video rồi hiện kết quả. Realtime: chạy đúng nhịp fps, cảnh báo hiện dần"><button class="tg on" data-mode="batch">Video</button><button class="tg" data-mode="rt">Realtime</button></div><span class="vstat" id="vstat">Chưa chạy</span></h3>
         <div class="srcrow">
           <div class="srcvar" id="srcFile">
             <input id="src" class="txt" type="text" placeholder="Đường dẫn file / thư mục (trên server) hoặc URL video (.mp4 ...)" spellcheck="false">
@@ -66,17 +51,11 @@
             <button class="btn" id="uploadBtn">Upload</button>
           </div>
           <div class="srcvar" id="srcCam" hidden>
-            <select id="camKind" class="txt" style="flex:0 0 200px"><option value="webcam">Camera máy (trình duyệt)</option><option value="rtsp">RTSP / RTMP (camera IP)</option></select>
-            <input id="rtspUrl" class="txt" type="text" placeholder="rtsp://user:pass@ip:554/stream" spellcheck="false" hidden>
+            <select id="camSel" class="txt"></select>
+            <input id="camUrl" class="txt" type="text" placeholder="rtsp://user:pass@ip:554/stream" spellcheck="false" hidden>
           </div>
           <button class="btn pri" id="runBtn">Phân tích</button>
           <button class="btn stop" id="stopBtn" disabled>Dừng</button>
-        </div>
-        <div class="multibox" id="multiBox" hidden>
-          <div id="multiRows"></div>
-          <div class="mactions"><button class="btn sm" id="multiAdd">+ Thêm camera</button><span class="note" id="multiNote">Tối thiểu 2, tối đa 8 camera. Camera IP chạy mỗi lượt tối đa theo "thời lượng tối đa" ở Settings, rồi chuyển sang camera kế tiếp.</span></div>
-          <div class="mstat" id="multiStat" hidden></div>
-          <input type="file" id="multiFile" accept="video/*" hidden>
         </div>
         <div class="srcmsg" id="srcmsg"></div>
         <div class="calbox" id="calBox" hidden>
@@ -156,37 +135,20 @@
 <section id="v-set" hidden>
   <div class="setgrid">
     <div class="card">
-      <h3>Server (Vast.ai)</h3>
-      <div class="opt"><label>Trạng thái <span id="beMsg">đang kiểm tra…</span></label>
-        <input type="text" id="beUrl" class="txt" placeholder="Để trống = dùng chính server đang phục vụ trang này" spellcheck="false"></div>
-      <div class="row"><button class="btn pri" id="beBtn">Kết nối</button><button class="btn" id="beOff">Mặc định</button></div>
-      <p class="note">Web chạy thẳng trên server Vast.ai cùng cổng với API, nên không cần nhập URL: để trống ô trên. Chỉ điền khi mở file web ở máy khác (ví dụ <code>http://IP:PORT</code>). Nút "Mặc định" xoá URL đã lưu.</p>
+      <h3>Kết nối backend (Kaggle / Colab)</h3>
+      <div class="opt"><label>URL backend <span id="beMsg">chưa kết nối</span></label>
+        <input type="text" id="beUrl" class="txt" placeholder="https://xxxx.trycloudflare.com" spellcheck="false"></div>
+      <div class="row"><button class="btn pri" id="beBtn">Kết nối</button><button class="btn" id="beOff">Ngắt</button></div>
+      <p class="note">Chạy notebook <code>exhibitflow_kaggle_server.ipynb</code> trên Kaggle, copy URL in ở ô "Mở đường hầm" rồi dán vào đây. Kết nối xong, quay lại Dashboard để Upload hoặc nhập đường dẫn video và bấm Phân tích.</p>
     </div>
     <div class="card">
-      <h3>Pipeline (như Settings của dashboard cũ)</h3>
-      <p class="note" id="coreInfo">CPU: đang đọc số nhân của server…</p>
-      <p class="note" id="coreWarn" hidden></p>
-      <div class="opt"><label>Chế độ chạy</label><select id="p-pipeline_mode" class="txt">
-        <option value="full">Đầy đủ: tracking + pose + hand + VLM (cảnh báo)</option>
-        <option value="tracking_seg">Tắt VLM: tracking + pose + hand + phát hiện chạm (để đo tốc độ)</option>
-        <option value="tracking">Chỉ tracking (không hiện vật, pose, hand, VLM)</option></select></div>
-      <div class="chk"><label><input type="checkbox" id="p-tracker_process" checked> Tracker chạy ở tiến trình riêng (thoát GIL)</label></div>
-      <div class="chk"><label><input type="checkbox" id="p-hand_process" checked> Hand (RTMW) chạy ở tiến trình riêng (thoát GIL)</label></div>
-      <div class="chk"><label><input type="checkbox" id="p-pose_process" checked> Pose (YOLOv8) chạy ở tiến trình riêng (thoát GIL)</label></div>
-      <div class="chk"><label><input type="checkbox" id="p-pose_gpu_preproc"> Pose: tiền xử lý + NMS trên GPU (nhanh hơn, keypoint lệch nhẹ)</label></div>
-      <div class="chk"><label><input type="checkbox" id="p-hand_batch" checked> Hand (RTMW) xử lý theo lô (nhanh ~1.8x)</label></div>
-      <div class="chk"><label><input type="checkbox" id="p-drop_frames" checked> Realtime: bỏ frame khi pipeline không theo kịp</label></div>
-      <div class="chk"><label><input type="checkbox" id="p-limit_cpu_threads"> Giới hạn 1 luồng CPU mỗi stage (máy ít nhân)</label></div>
-      <div class="opt"><label>Giữ khung đỏ cảnh báo (giây)</label><input type="number" id="p-alarm_show_sec" class="txt" step="0.5" min="0" value="4"></div>
-      <div class="opt"><label>Camera: thời lượng tối đa mỗi lần chạy (phút)</label><input type="number" id="p-camera_max_min" class="txt" step="1" min="1" max="240" value="30"></div>
-      <div class="chk"><label><input type="checkbox" id="p-multi_parallel" checked> Multi-camera: chạy các camera SONG SONG (mỗi camera một tiến trình, tốn thêm VRAM/RAM mỗi camera)</label></div>
-      <div class="opt"><label>Multi-camera: số camera chạy cùng lúc tối đa (camera còn lại chờ tới lượt)</label><input type="number" id="p-multi_max_parallel" class="txt" step="1" min="1" max="8" value="2"></div>
-      <div class="opt"><label>Số luồng CPU của tiến trình tracker</label><input type="number" id="p-tracker_threads" class="txt" step="1" min="1" max="64" value="1"></div>
-      <div class="opt"><label>Số luồng CPU của tiến trình hand (torch/OpenCV; onnxruntime tự chọn)</label><input type="number" id="p-hand_threads" class="txt" step="1" min="1" max="64" value="1"></div>
-      <div class="opt"><label>Số luồng CPU của tiến trình pose</label><input type="number" id="p-pose_threads" class="txt" step="1" min="1" max="64" value="4"></div>
-      <div class="opt"><label>Độ dài queue giữa 2 stage</label><input type="number" id="p-queue_size" class="txt" step="1" min="1" max="64" value="8"></div>
-      <div class="opt"><label>Chỉ chạy pose/hand cho người cách hiện vật ≤ N x chiều cao người (0 = mọi người)</label><input type="number" id="p-pose_gate_norm_dist" class="txt" step="0.1" min="0" value="1.5"></div>
-      <p class="note">Các stage detect, track, pose, hand, VLM luôn chạy song song (pipelining). Ba ô "tiến trình riêng" cộng thêm ~0.5 GB VRAM mỗi ô và nạp lại model khi đổi. Các ô "số luồng" chỉ có tác dụng khi bật tiến trình riêng tương ứng; đổi thì nạp lại model. <b>Realtime</b> đọc video đúng nhịp fps gốc như camera; <b>Video</b> xử lý mọi frame.</p>
+      <h3>Camera (Realtime)</h3>
+      <div class="camlist" id="camList"></div>
+      <div class="opt"><label>Thêm camera</label>
+        <input id="camName" class="txt" placeholder="Tên (vd. CAM 3 · Phòng tranh)" style="margin-bottom:8px">
+        <input id="camAddUrl" class="txt" placeholder="rtsp://user:pass@ip:554/stream" spellcheck="false"></div>
+      <div class="row"><button class="btn pri" id="camAdd">Thêm</button></div>
+      <p class="note">Danh sách lưu trong trình duyệt. Backend hiện <b>chưa đọc được camera trực tiếp</b> (RTSP/RTMP): pipeline mới chỉ đọc file video.</p>
     </div>
     <div class="card">
       <h3>Cấu hình phân tích</h3>
@@ -194,11 +156,6 @@
         <input type="range" id="conf" min="0.3" max="0.95" step="0.05" value="0.6"></div>
       <p class="note">Chỉ cảnh báo khi VLM trả hành vi bất thường với độ tin cậy từ ngưỡng này trở lên.</p>
     </div>
-  </div>
-  <div class="card" id="tuningCard" style="margin-top:16px">
-    <h3>Tinh chỉnh thuật toán &amp; Ngưỡng <span class="sp"></span><button class="btn sm" type="button" id="tuningResetAll">Khôi phục mặc định tất cả</button></h3>
-    <p class="note" style="margin-top:0;margin-bottom:12px">Thay đổi được lưu trên trình duyệt và áp dụng từ lần phân tích kế tiếp. Để trống ô số để dùng mặc định <code>settings.py</code>. Các mục có nhãn <span class="tbadge">Nạp lại model</span> sẽ tự nạp lại tracker/detector khi chạy.</p>
-    <div id="tuningGroups"><p class="note">Đang chờ kết nối server để tải danh sách tham số tinh chỉnh…</p></div>
   </div>
 </section>
 </main>
