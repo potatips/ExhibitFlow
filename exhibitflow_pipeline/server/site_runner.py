@@ -19,6 +19,7 @@ SITES_DIR = HERE / 'sites'
 def find_repo():
     """Thư mục repo multicam-2d-floorplan-tracker (FLOORPLAN_DIR, external/, hoặc cạnh dự án)."""
     cands = [os.environ.get('FLOORPLAN_DIR'), HERE.parent / 'external' / 'multicam-2d-floorplan-tracker',
+             HERE.parent.parent / 'external' / 'multicam-2d-floorplan-tracker',          # nơi `make setup` / Dockerfile clone vào
              HERE.parent.parent.parent / 'multicam-2d-floorplan-tracker', HERE.parent.parent / 'multicam-2d-floorplan-tracker',
              Path('/kaggle/working/multicam-2d-floorplan-tracker')]
     for c in cands:

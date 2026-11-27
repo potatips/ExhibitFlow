@@ -205,6 +205,14 @@ def ensure_structural_models():
     subprocess.run([sys.executable, str(REPO / 'scripts' / 'download_structural_models.py')], check=True, cwd=str(REPO))
 
 
+def ensure_person_models(weights):
+    """Model người của repo (YOLO11n-pose + ResNet18), cả hai đường chạy đều cần: thiếu thì tải bằng script của repo (cần Internet và curl)."""
+    if Path(weights).is_file() and (REPO / 'models' / 'resnet18-f37072fd.pth').is_file():
+        return
+    print('Tải model người của repo...', flush=True)
+    subprocess.run([sys.executable, str(REPO / 'scripts' / 'download_person_models.py')], check=True, cwd=str(REPO))
+
+
 def repo_pipeline(dataset, out, weights, frames, device):
     """Pipeline của repo: dựng mặt bằng + phát hiện / chiếu / hợp nhất người + vẽ ảnh mặt bằng. Trả (records, map_config, transforms_refined)."""
     import cv2
@@ -259,6 +267,7 @@ def main():
     out = a.output_dir
     out.mkdir(parents=True, exist_ok=True)
     dataset = RoomDataset(a.data_dir)
+    ensure_person_models(a.weights)                            # ngoài try bên dưới: tải lỗi thì báo đúng lỗi tải
     fps = dataset.cameras[0]['fps']
     records = config = transforms = None
     note = None
