@@ -331,6 +331,20 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
             ms = state.models_state
         return {'ok': True, 'version': 'ef-web-1', 'demo': demo, 'models': ms, 'jobs': len(jobs), 'det_conf': web_cfg['det_conf']}
 
+    @app.post('/api/config')
+    def set_config(body: dict):
+        """Web đổi ngưỡng phát hiện người (det_conf). Hợp lệ: [0.001, 0.99]; null/'' = về mặc định của engine. Áp ngay cho detector đang nạp
+        và cho mọi lượt chạy sau (run_video áp lại web_cfg['det_conf'])."""
+        if 'det_conf' in body:
+            raw = body['det_conf']
+            c = parse_det_conf(raw)
+            if raw not in (None, '') and c is None:
+                raise HTTPException(400, 'det_conf phải nằm trong [0.001, 0.99]')
+            web_cfg['det_conf'] = c
+            if apply_det_conf(runner, c):
+                state.log(f'Ngưỡng phát hiện người (detector conf) = {c}')
+        return {'ok': True, 'det_conf': web_cfg['det_conf']}
+
     @app.get('/api/state')
     def get_state():
         return state.snapshot()
@@ -808,6 +822,8 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         if st != 'done' or tl is None or not tl.is_file() or tl.stat().st_mtime < t_start - 1:
             raise RuntimeError(msg or 'Engine không trả kết quả cho video này')
         out = json.loads(tl.read_text(encoding='utf-8'))
+        if (tl.parent / 'live.mp4').is_file():
+            out['_live'] = str(tl.parent / 'live.mp4')       # video đã vẽ khung người / hiện vật của engine
         try:
             out['_run'] = json.loads((tl.parent / 'run.json').read_text(encoding='utf-8'))
         except Exception:                                  # noqa: BLE001
@@ -840,6 +856,8 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                 job['log'].append(f'[events] {site["cameras"][cam].get("label", cam)}: phân tích hành vi bất thường...')
                 try:
                     tl = app.state.analyze_video(job, path)
+                    if tl.get('_live') and Path(tl['_live']).is_file():
+                        job.setdefault('live', {})[cam] = Path(tl['_live'])
                     spec = site_events.fit_to_video(site['cameras'][cam], int(tl['width']), int(tl['height']))
                     H = next((c.get('H') for c in result.get('cameras', []) if c.get('id') == cam), None)
                     # có ma trận chiếu của repo map: dùng nó (cùng hệ toạ độ với ảnh mặt bằng); không thì tự tính từ K, R, t
@@ -1018,8 +1036,11 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         return FileResponse(p, media_type='image/png', headers={'Cache-Control': 'no-store'})
 
     @app.get('/api/site-jobs/{jid}/video/{cam}')
-    def site_job_video(jid: str, cam: str):
+    def site_job_video(jid: str, cam: str, kind: str = 'live'):
         j = get_site_job(jid)
+        lv = (j.get('live') or {}).get(cam)
+        if kind != 'original' and lv is not None and Path(lv).is_file():
+            return FileResponse(lv, media_type='video/mp4')      # live.mp4 có khung người; ?kind=original là video gốc
         p = j['videos'].get(cam)
         if p is None or not Path(p).is_file():
             raise HTTPException(404, 'Không có video camera này')
