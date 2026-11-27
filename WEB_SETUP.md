@@ -55,7 +55,7 @@ Mở link `serve.py` in ra (`http://127.0.0.1:8765/index.html`), vào **Settings
 
 ```bash
 # trên instance Vast (template mở port 8000, xem VAST_SETUP.md)
-BRANCH=Hung HF_TOKEN=hf_xxx START=1 bash setup.sh     # hoặc: make run
+BRANCH=main HF_TOKEN=hf_xxx START=1 bash setup.sh     # hoặc: make run
 make url                                              # in http://<IP>:<port-ngoài>
 ```
 

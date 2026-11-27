@@ -20,7 +20,7 @@ lúc kiểm tra) — hãy tự xác minh trên giao diện: xem cột trạng th
 
 **Trước (miễn phí, làm trên máy bạn / GitHub Actions):**
 - Build + push Docker image từ `exhibitflow_pipeline/docker/Dockerfile` (đã có sẵn: llama-server build sẵn, deps, code, model bản đồ ~200 MB).
-- Push code lên nhánh `Hung`, tạo template Vast.
+- Push code lên nhánh `main`, tạo template Vast.
 
 **Sau khi tạo instance (tính phí):**
 - Pull image / boot container, chạy `PROVISIONING_SCRIPT` (`setup.sh`): clone, `make setup` (deps, tải weights HF, build llama.cpp nếu thiếu, model bản đồ).
@@ -34,7 +34,7 @@ Muốn giảm thật sự, dùng image dựng sẵn (xem cuối).
 1. Vast.ai → **Templates** → chọn template `vastai/pytorch` hiện tại → **Edit** (hoặc Clone).
 2. Giữ nguyên Image, port (vd `-p 8000:8000`), launch mode Jupyter/SSH, env hiện có.
 3. Thêm **Environment Variables**:
-   - `PROVISIONING_SCRIPT` = `https://raw.githubusercontent.com/khangkaka066/ExhibitFlow/Hung/setup.sh`
+   - `PROVISIONING_SCRIPT` = `https://raw.githubusercontent.com/khangkaka066/ExhibitFlow/main/setup.sh`
    - `HF_TOKEN` = token của bạn (đặt trong ô env của Vast, **không** commit vào repo)
    - (tuỳ chọn) `START=1` để tự chạy dashboard sau setup; `MODE=full`, `PORT=8000`
 4. **Save / Create and Use**. Chọn instance, thuê như bình thường.
@@ -56,7 +56,7 @@ vastai create instance <OFFER_ID> --template_hash <TEMPLATE_HASH> --disk 80
 
 # hoặc không dùng template
 vastai create instance <OFFER_ID> --image vastai/pytorch:latest --disk 80 --ssh --direct \
-  --env '-p 8000:8000 -e PROVISIONING_SCRIPT=https://raw.githubusercontent.com/khangkaka066/ExhibitFlow/Hung/setup.sh -e HF_TOKEN=hf_xxx -e START=1'
+  --env '-p 8000:8000 -e PROVISIONING_SCRIPT=https://raw.githubusercontent.com/khangkaka066/ExhibitFlow/main/setup.sh -e HF_TOKEN=hf_xxx -e START=1'
 
 vastai show instances            # trạng thái loading / running
 vastai logs <INSTANCE_ID>        # xem log provisioning

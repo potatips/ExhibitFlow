@@ -2,17 +2,17 @@
 # ExhibitFlow - SETUP cho Vast.ai (chỉ chuẩn bị môi trường, KHÔNG chạy dashboard trừ khi START=1).
 #
 # Dùng làm PROVISIONING_SCRIPT của template vastai/pytorch:
-#   PROVISIONING_SCRIPT=https://raw.githubusercontent.com/khangkaka066/ExhibitFlow/Hung/setup.sh
+#   PROVISIONING_SCRIPT=https://raw.githubusercontent.com/khangkaka066/ExhibitFlow/main/setup.sh
 # hoặc chạy tay:  HF_TOKEN=hf_xxx bash setup.sh
 #
-# Biến (tuỳ chọn): HF_TOKEN  BRANCH=Hung  REPO_DIR=/workspace/ExhibitFlow  MODE=full  PORT=8000
+# Biến (tuỳ chọn): HF_TOKEN  BRANCH=main  REPO_DIR=/workspace/ExhibitFlow  MODE=full  PORT=8000
 #                  START=1 -> chạy dashboard nền sau khi setup xong (make run)
 # Idempotent: chạy lại an toàn, các bước đã xong được bỏ qua (Makefile đánh dấu ở .make/stamp).
 set -Eeuo pipefail
 trap 'echo "[setup] !!! LỖI ở dòng $LINENO (lệnh: $BASH_COMMAND)" >&2' ERR
 
 REPO_URL="${REPO_URL:-https://github.com/khangkaka066/ExhibitFlow.git}"
-BRANCH="${BRANCH:-Hung}"
+BRANCH="${BRANCH:-main}"
 REPO_DIR="${REPO_DIR:-/workspace/ExhibitFlow}"   # /workspace là nơi lưu bền trên Vast; đường dẫn không được có dấu cách (Makefile)
 START="${START:-0}"
 
@@ -34,8 +34,7 @@ if [ -n "${EXHIBITFLOW_PREBUILT:-}" ] && [ -f "$EXHIBITFLOW_PREBUILT/.make/stamp
     export DATA="${DATA:-/workspace/dashboard_data}"   # kết quả lưu ở /workspace (bền)
 elif [ -d "$REPO_DIR/.git" ]; then
     git -C "$REPO_DIR" fetch --depth 1 origin "$BRANCH"
-    git -C "$REPO_DIR" checkout -q "$BRANCH"
-    git -C "$REPO_DIR" reset -q --hard "origin/$BRANCH"
+    git -C "$REPO_DIR" checkout -q -f -B "$BRANCH" FETCH_HEAD   # clone nông 1 nhánh cũ vẫn chuyển được sang nhánh khác
 else
     mkdir -p "$(dirname "$REPO_DIR")"
     git clone --depth 1 -b "$BRANCH" "$REPO_URL" "$REPO_DIR"

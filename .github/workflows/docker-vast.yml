@@ -6,7 +6,7 @@ on:
         description: "Base vastai/pytorch (đúng tag trong template Vast)"
         default: "vastai/pytorch:latest"
   push:
-    branches: [Hung]
+    branches: [main, Hung]
     paths: ["exhibitflow_pipeline/**", "web/**", "Makefile", ".github/workflows/docker-vast.yml"]
 permissions:
   contents: read

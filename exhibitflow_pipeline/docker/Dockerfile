@@ -18,7 +18,7 @@ RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp /tmp/llama.cpp \
     && rm -rf /tmp/llama.cpp
 
 # ---- code (đổi REPO_REF để buộc clone lại bản mới) ----
-ARG BRANCH=Hung
+ARG BRANCH=main
 ARG REPO_REF=0
 WORKDIR /opt/ExhibitFlow
 RUN git clone --depth 1 --branch ${BRANCH} https://github.com/khangkaka066/ExhibitFlow.git . \

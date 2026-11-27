@@ -1,6 +1,6 @@
 # ExhibitFlow dashboard - cài đặt + chạy bằng 1 lệnh (Vast.ai / máy Linux có GPU NVIDIA).
 #
-#   git clone -b Hung_test https://github.com/khangkaka066/ExhibitFlow.git && cd ExhibitFlow
+#   git clone -b main https://github.com/khangkaka066/ExhibitFlow.git && cd ExhibitFlow
 #   HF_TOKEN=hf_xxx make            # cài tất cả, chạy nền, in link truy cập
 #   HF_TOKEN=hf_xxx make vast       # như trên cho Vast.ai: cache HF ở /workspace, bật tải nhanh, chạy lại nếu đang chạy
 #
