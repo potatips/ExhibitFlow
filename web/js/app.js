@@ -965,7 +965,7 @@ if($('#anExportBtn'))$('#anExportBtn').onclick=()=>{
 S.cal={per:{},all:null};
 const calOn=()=>!!S.cal.all||Object.keys(S.cal.per).length>0;
 function renderCalBox(){const box=$('#calBox'),preset=!!$('#siteSel').value;
-  const show=API.ok&&S.mode==='batch'&&S.files.length>=1;box.hidden=!show;if(!show)return;
+  const show=S.mode==='batch'&&S.files.length>=1;box.hidden=!show;if(!show)return;
   $('#calRows').hidden=preset;$('#calAllRow').hidden=preset;
   $('#calRows').innerHTML=S.files.map((f,i)=>`<div class="calrow"><span title="${esc(f.name)}">CAM ${i+1} · ${esc(f.name)}</span><input type="file" accept=".json,application/json" data-cal="${i}" hidden><button class="btn sm" type="button" data-calbtn="${i}">Chọn hiệu chuẩn</button><em class="${S.cal.per[i]?'ok':''}">${S.cal.per[i]?esc(S.cal.per[i].name):'chưa chọn'}</em></div>`).join('');
   const a=$('#calAllName');a.textContent=S.cal.all?S.cal.all.name:'chưa chọn';a.className=S.cal.all?'ok':''}
