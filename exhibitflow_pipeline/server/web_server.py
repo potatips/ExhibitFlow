@@ -849,6 +849,8 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                     tl = app.state.analyze_video(job, path)
                     if tl.get('_live'):
                         job.setdefault('live', {})[cam] = tl['_live']
+                    if tl.get('_result_dir'):
+                        job.setdefault('result_dirs', {})[cam] = tl['_result_dir']
                     spec = site_events.fit_to_video(site['cameras'][cam], int(tl['width']), int(tl['height']))
                     H = next((c.get('H') for c in result.get('cameras', []) if c.get('id') == cam), None)
                     # có ma trận chiếu của repo map: dùng nó (cùng hệ toạ độ với ảnh mặt bằng); không thì tự tính từ K, R, t
@@ -1017,6 +1019,26 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         if j['status'] != 'done':
             raise HTTPException(409, 'Job chưa xong')
         return FileResponse(j['out'] / 'site_result.json', media_type='application/json')
+
+    @app.get('/api/site-jobs/{jid}/result/{cam}')
+    def site_job_cam_result(jid: str, cam: str):
+        """result.json của engine cho một camera (hộp, hiện vật, cảnh báo) - cùng dạng với chế độ 1 camera."""
+        rd = (get_site_job(jid).get('result_dirs') or {}).get(cam)
+        if not rd or not (Path(rd) / 'result.json').is_file():
+            raise HTTPException(404, 'Chưa có kết quả engine cho camera này')
+        return FileResponse(Path(rd) / 'result.json', media_type='application/json')
+
+    @app.get('/api/site-jobs/{jid}/files/{cam}/{path:path}')
+    def site_job_cam_file(jid: str, cam: str, path: str):
+        """File trong thư mục kết quả của camera (vlm_inputs/<task>/sheet.jpg ...)."""
+        rd = (get_site_job(jid).get('result_dirs') or {}).get(cam)
+        if not rd:
+            raise HTTPException(404, 'Chưa có kết quả')
+        base = Path(rd).resolve()
+        target = (base / path).resolve()
+        if base not in target.parents or not target.is_file():
+            raise HTTPException(404, 'Không có file')
+        return FileResponse(target)
 
     @app.get('/api/site-jobs/{jid}/map')
     def site_job_map(jid: str):

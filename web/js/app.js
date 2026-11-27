@@ -561,7 +561,11 @@ async function runSite(files,siteId){
   for(const m of map){
     const evs=SITEDATA.events.filter(e=>e.cams.includes(m.cam)).map(e=>({id:e.id,track:e.person_id!=null?e.person_id:'?',art:e.artifact!=null?e.artifact:'?',start:e.t0,end:e.t1,
       behavior:e.behavior,decision:'ANOMALY',conf:e.conf,reason:e.evidence||'Engine phát hiện hành vi bất thường.',review:null,img:null}));
-    const data={real:true,raw:null,meta:{duration:dur,camera_id:m.file.name,width:1920,height:1080,nw:960},arts:[],tracks:[],events:evs};
+    let data={real:true,raw:null,meta:{duration:dur,camera_id:m.file.name,width:1920,height:1080,nw:960},arts:[],tracks:[],events:evs};
+    try{                                          // result.json của engine cho camera này -> hiển thị y như chế độ 1 camera (ảnh bằng chứng, tên hiện vật...)
+      const camRes=await(await API.f(`/api/site-jobs/${id}/result/${m.cam}`)).json(),imgs={};
+      await Promise.all((camRes.events||[]).filter(e=>e.task).map(async e=>{imgs[e.event_id]=await blobUrl(`/api/site-jobs/${id}/files/${m.cam}/vlm_inputs/${e.task}/sheet.jpg`)}));
+      data=fromResult(camRes,e=>imgs[e.event_id])}catch(err){console.warn('Không đọc được result.json của',m.cam,err)}
     CAMRES.push({name:m.file.name,label:site.labels[m.cam]||m.cam,cam:m.cam,data,videoURL:await blobUrl(`/api/site-jobs/${id}/video/${m.cam}`),map:MAP})}
   showCam(0);setStatus(`Hoàn tất ${CAMRES.length} camera`);
   const ids=new Set(res.frames.flatMap(f=>f.people.map(p=>p.id)));
