@@ -240,7 +240,7 @@ BLUE outline(s) mark exhibit(s).
 - "stealing": person takes the exhibit away, hides it (bag/clothes), or the exhibit is missing afterwards
 - "uncertain": view is occluded or too small to decide
 Answer JSON only:
-{{"label": "...", "confidence": 0.0, "contact_frames": [], "evidence": "<one sentence>"}}
+{{"label": "...", "confidence": <your certainty, a number between 0.5 and 1.0>, "contact_frames": [], "evidence": "<one sentence>"}}
 "contact_frames" = the Frame numbers (1..{n}) in which the red-box person's hand is VISIBLY touching/holding the exhibit (empty list if never). Do not include frames where the hand is only approaching or near.''')
 SYSTEM_PROMPT = ('You are a careful CCTV analyst for a museum. Judge only what is visible in the frames. '
                  'Touching means the hand visibly reaches the exhibit or its pedestal; being near is not touching. '
