@@ -255,6 +255,27 @@ def map_polygons(transforms, config, dataset):
     return polys
 
 
+def fix_depth_device():
+    """Repo map đặt Depth Anything lên CPU/MPS, nhưng infer_image của code gốc đẩy ảnh lên CUDA nếu có -> trên GPU server lỗi
+    'Input type (torch.cuda.FloatTensor) and weight type (torch.FloatTensor)'. Đưa model về cùng thiết bị với ảnh trước khi suy luận."""
+    try:
+        import torch
+        vendor = REPO / 'models' / 'Depth-Anything-V2' / 'metric_depth'
+        if not vendor.is_dir() or not torch.cuda.is_available():
+            return
+        sys.path.insert(0, str(vendor))
+        from depth_anything_v2.dpt import DepthAnythingV2
+        orig = DepthAnythingV2.infer_image
+
+        def infer_image(self, *a, **k):
+            self.to('cuda')
+            return orig(self, *a, **k)
+
+        DepthAnythingV2.infer_image = infer_image
+    except Exception as e:                                     # noqa: BLE001
+        print('fix_depth_device bỏ qua:', e, flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--data-dir', type=Path, required=True)
@@ -264,6 +285,7 @@ def main():
     ap.add_argument('--device', default='cpu')
     ap.add_argument('--map', choices=['repo', 'fallback'], default='repo', help='repo: mặt bằng + chiếu của repo; fallback: bỏ qua bước dựng mặt bằng')
     a = ap.parse_args()
+    fix_depth_device()
     out = a.output_dir
     out.mkdir(parents=True, exist_ok=True)
     dataset = RoomDataset(a.data_dir)
