@@ -103,3 +103,35 @@ def test_default_policy_is_person(monkeypatch=None):
     import os
     os.environ.pop('EXHIBITFLOW_XCAM_POLICY', None)
     assert sf.policy() == 'person'
+
+
+def test_person_policy_only_raises_the_time_of_the_touch():
+    # A không chắc suốt 0-7,5 s; B chỉ thấy chạm ở cuối (7-10 s): đoạn đầu của A phải giữ nguyên CANDIDATE
+    a = dict(cam([(0, 2, 0.0, 7.5, 'CANDIDATE', .4)], [2]), id_map={2: 7})
+    b = dict(cam([(0, 5, 7.0, 10.0, 'ANOMALY', .9)], [5]), id_map={5: 7})
+    f, info = sf.fuse(dict(A=a, B=b), 'person')
+    got = [(e['decision'], e['start_time_s'], e['end_time_s']) for e in f['A']['res']['events']]
+    assert got == [('CANDIDATE', 0.0, 7.0), ('ANOMALY', 7.0, 7.5)], got
+    assert len({e['event_id'] for e in f['A']['res']['events']}) == 2
+    assert [al['alarm_start_time_s'] for al in f['A']['res']['alerts']] == [7.0]
+    assert f['A']['add'][0]['spans'] == [[70, 75]] and info['propagated'][0]['t0'] == 7.0
+    assert a['res']['events'][0]['end_time_s'] == 7.5                              # dữ liệu vào không bị sửa
+
+
+def test_person_policy_keeps_both_sides_of_a_short_touch():
+    a = dict(cam([(0, 2, 0.0, 9.0, 'NORMAL', 0.0)], [2]), id_map={2: 7})
+    b = dict(cam([(0, 5, 4.0, 5.0, 'ANOMALY', .9)], [5]), id_map={5: 7})
+    f, _ = sf.fuse(dict(A=a, B=b), 'person')
+    got = [(e['decision'], e['start_time_s'], e['end_time_s']) for e in f['A']['res']['events']]
+    assert got == [('NORMAL', 0.0, 4.0), ('ANOMALY', 4.0, 5.0), ('NORMAL', 5.0, 9.0)], got
+    assert len({e['event_id'] for e in f['A']['res']['events']}) == 3
+
+
+def test_person_policy_trims_the_end_when_the_touch_is_first():
+    a = dict(cam([(0, 2, 2.0, 9.0, 'CANDIDATE', .4)], [2]), id_map={2: 7})
+    b = dict(cam([(0, 5, 1.0, 4.0, 'ANOMALY', .9)], [5]), id_map={5: 7})
+    f, _ = sf.fuse(dict(A=a, B=b), 'person')
+    got = [(e['decision'], e['start_time_s'], e['end_time_s']) for e in f['A']['res']['events']]
+    assert got == [('ANOMALY', 2.0, 4.0), ('CANDIDATE', 4.0, 9.0)], got
+    assert len({e['event_id'] for e in f['A']['res']['events']}) == 2
+
