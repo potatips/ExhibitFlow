@@ -967,9 +967,10 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                 result['fusion'] = info
                 for cam, v in fused.items():
                     job.setdefault('fused', {})[cam] = v['res']
-                    tls[cam] = site_fusion.drop_demoted_alerts(tls[cam], v['drop'])
+                    tls[cam] = site_fusion.add_promoted_alerts(site_fusion.drop_demoted_alerts(tls[cam], v['drop']), v.get('add'))
                 n_dem = sum(1 for e in info['events'] if e['status'] == 'conflict')
-                job['log'].append(f'[events] đối chiếu chéo camera ({info["policy"]}): {len(info["events"])} cảnh báo, {n_dem} bị hạ xuống "cần xem lại" vì camera khác không xác nhận')
+                job['log'].append(f'[events] đối chiếu chéo camera ({info["policy"]}): người bất thường {info.get("anomaly_persons") or []}, '
+                                  f'{len(info.get("propagated") or [])} sự kiện được lan sang camera khác, {n_dem} bị hạ xuống "cần xem lại"')
         except Exception as e:                          # noqa: BLE001 - đối chiếu lỗi: giữ kết quả riêng từng camera
             job['log'].append(f'[events] đối chiếu chéo lỗi: {type(e).__name__}: {e}')
         for cam, tl in tls.items():
