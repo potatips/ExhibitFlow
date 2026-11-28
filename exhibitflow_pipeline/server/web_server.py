@@ -101,6 +101,14 @@ def pipe_of(opts):
 MAKE_MAP = os.environ.get('EXHIBITFLOW_MAKE_MAP', '1') != '0'   # tạo map 2D từ video (multicam-2d-floorplan-tracker), mất ~15-25 s/video
 
 
+def det_conf_state(web_cfg):
+    """Ngưỡng detector: đang đặt (None = chưa đặt), mặc định của engine, và giá trị thực sự đang dùng."""
+    from exhibitflow import settings as efs
+    default = float(efs.MODELS.get('detector', {}).get('conf', 0.01))
+    cur = web_cfg.get('det_conf')
+    return dict(det_conf=cur, det_conf_default=default, det_conf_effective=default if cur is None else cur)
+
+
 def parse_det_conf(v):
     """Ngưỡng phát hiện người từ web: số trong [0.001, 0.99], không hợp lệ thì None (giữ mặc định)."""
     try:
@@ -359,7 +367,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
     def health():
         with state.lock:
             ms = state.models_state
-        return {'ok': True, 'version': 'ef-web-1', 'demo': demo, 'models': ms, 'jobs': len(jobs), 'det_conf': web_cfg['det_conf']}
+        return {'ok': True, 'version': 'ef-web-1', 'demo': demo, 'models': ms, 'jobs': len(jobs), **det_conf_state(web_cfg)}
 
     @app.post('/api/config')
     async def set_config(request: Request):
@@ -374,7 +382,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
             raise HTTPException(400, 'det_conf phải nằm trong [0.001, 0.99] hoặc null')
         web_cfg['det_conf'] = parse_det_conf(v)
         applied = apply_det_conf(runner, web_cfg['det_conf'])
-        return {'det_conf': web_cfg['det_conf'], 'applied_now': applied}
+        return {**det_conf_state(web_cfg), 'applied_now': applied}
 
     @app.get('/api/state')
     def get_state():

@@ -175,7 +175,7 @@ const API={direct:(()=>{try{return localStorage.getItem('ef_direct')==='1'}catch
   async f(p,o={}){const r=await fetch(this.base+p,{...o,headers:{...NGROK_H,...(o.headers||{})}});if(!r.ok)throw new Error(await errText(r));return r},
   async ping(){this.ok=false;
     /* Chế độ trực tiếp / chưa nhập URL: thử cùng origin (trang được chính GPU server phục vụ) */
-    if(this.direct||this.base||location.protocol!=='file:'){try{const r=await fetch(this.base+'/api/health',{headers:NGROK_H,signal:AbortSignal.timeout(6000)});this.ok=r.ok;if(r.ok){try{showDetConf((await r.json()).det_conf)}catch{}}}catch{this.ok=false}}
+    if(this.direct||this.base||location.protocol!=='file:'){try{const r=await fetch(this.base+'/api/health',{headers:NGROK_H,signal:AbortSignal.timeout(6000)});this.ok=r.ok;if(r.ok){try{showDetConf(await r.json())}catch{}}}catch{this.ok=false}}
     const c=$('#beChip');c.classList.toggle('ok',this.ok);c.classList.toggle('bad',!this.ok);
     c.querySelector('span').textContent=this.ok?'Đã kết nối':'Mất kết nối';
     $('#beMsg').textContent=this.ok?'đã kết nối ✓':(this.direct?'GPU server cùng origin: không phản hồi':this.base?'không kết nối được':'chưa kết nối');
@@ -1017,8 +1017,9 @@ $('#csvBtn').onclick=()=>{
 document.addEventListener('keydown',e=>{if(e.code==='Space'&&!$('#v-dash').hidden&&!/SELECT|INPUT|BUTTON|TEXTAREA/.test(e.target.tagName)){e.preventDefault();$('#play').click()}});
 
 /* ---------- Settings: ngưỡng phát hiện người (gửi lên server) ---------- */
-function showDetConf(v){const el=$('#detConf');if(!el)return;if(v==null){$('#detV').textContent='mặc định'}else{el.value=v;$('#detV').textContent=(+v).toFixed(2)}}
-async function postDetConf(v){const r=await(await API.f('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({det_conf:v})})).json();showDetConf(r.det_conf);return r}
+function showDetConf(o){const el=$('#detConf');if(!el||o==null)return;const eff=typeof o==='object'?o.det_conf_effective:o,def=typeof o==='object'?o.det_conf_default:null;
+  if(eff==null)return;el.value=eff;$('#detV').textContent=(+eff).toFixed(2)+((def!=null&&Math.abs(eff-def)<1e-9)?' (mặc định)':'')}
+async function postDetConf(v){const r=await(await API.f('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({det_conf:v})})).json();showDetConf(r);return r}
 let detTimer=0;
 $('#detConf').oninput=e=>{const v=+e.target.value;$('#detV').textContent=v.toFixed(2);clearTimeout(detTimer);
   detTimer=setTimeout(async()=>{try{await postDetConf(v);logLine('Ngưỡng phát hiện người = '+v.toFixed(2))}catch(err){logLine('Không đặt được ngưỡng: '+err.message)}},400)};
