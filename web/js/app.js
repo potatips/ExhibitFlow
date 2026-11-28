@@ -1018,11 +1018,11 @@ document.addEventListener('keydown',e=>{if(e.code==='Space'&&!$('#v-dash').hidde
 
 /* ---------- Settings: ngưỡng phát hiện người (gửi lên server) ---------- */
 function showDetConf(o){const el=$('#detConf');if(!el||o==null)return;const eff=typeof o==='object'?o.det_conf_effective:o,def=typeof o==='object'?o.det_conf_default:null;
-  if(eff==null)return;el.value=eff;$('#detV').textContent=(+eff).toFixed(2)+((def!=null&&Math.abs(eff-def)<1e-9)?' (mặc định)':'')}
+  if(eff==null)return;el.value=eff;$('#detN').value=(+eff).toFixed(3);$('#detV').textContent=(def!=null&&Math.abs(eff-def)<1e-9)?'(mặc định)':''}
 async function postDetConf(v){const r=await(await API.f('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({det_conf:v})})).json();showDetConf(r);return r}
 let detTimer=0;
-$('#detConf').oninput=e=>{const v=+e.target.value;$('#detV').textContent=v.toFixed(2);clearTimeout(detTimer);
-  detTimer=setTimeout(async()=>{try{await postDetConf(v);logLine('Ngưỡng phát hiện người = '+v.toFixed(2))}catch(err){logLine('Không đặt được ngưỡng: '+err.message)}},400)};
+bindNum($('#detConf'),$('#detN'),v=>{$('#detV').textContent='';clearTimeout(detTimer);
+  detTimer=setTimeout(async()=>{try{await postDetConf(v);logLine('Ngưỡng phát hiện người = '+v.toFixed(3))}catch(err){logLine('Không đặt được ngưỡng: '+err.message)}},400)},3);
 $('#detReset').onclick=async()=>{try{await postDetConf(null);logLine('Ngưỡng phát hiện người về mặc định của engine.')}catch(err){logLine('Không đặt được ngưỡng: '+err.message)}};
 
 /* ---------- Settings: kết nối, nhập kết quả ---------- */
@@ -1033,7 +1033,13 @@ $('#beDirect').onchange=async()=>{API.direct=$('#beDirect').checked;try{localSto
 applyDirectUI();
 $('#beBtn').onclick=async()=>{API.base=$('#beUrl').value.trim().replace(/\/+$/,'');try{localStorage.setItem('ef_api',API.base)}catch{}await API.ping()};
 $('#beOff').onclick=async()=>{API.base='';$('#beUrl').value='';try{localStorage.removeItem('ef_api')}catch{}await API.ping()};
-$('#conf').oninput=e=>$('#confV').textContent=(+e.target.value).toFixed(2);
+/* ô nhập số <-> thanh kéo: gõ số (kẹp vào khoảng cho phép) hoặc kéo, hai bên luôn khớp nhau */
+function bindNum(sl,num,onSet,dec){const clamp=v=>Math.min(+sl.max,Math.max(+sl.min,v));
+  sl.addEventListener('input',()=>{num.value=(+sl.value).toFixed(dec);onSet(+sl.value)});
+  const commit=()=>{const v=parseFloat(String(num.value).replace(',','.'));if(!isFinite(v)){num.value=(+sl.value).toFixed(dec);return}
+    const c=clamp(v);sl.value=c;num.value=c.toFixed(dec);onSet(c)};
+  num.addEventListener('change',commit);num.addEventListener('keydown',e=>{if(e.key==='Enter'){commit();num.blur()}})}
+bindNum($('#conf'),$('#confN'),()=>{},2);
 
 /* ---------- Camera (Realtime) ---------- */
 let CAMS=(()=>{try{const v=JSON.parse(localStorage.getItem('ef_cams')||'null');if(Array.isArray(v)&&v.length)return v}catch{}return[{name:'CAM 1 · Sảnh chính',url:''},{name:'CAM 2 · Phòng gốm',url:''}]})();

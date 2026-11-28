@@ -522,3 +522,6 @@ html,body{color:var(--text)}
 .an-jump{display:flex;gap:6px}
 @media(max-width:1100px){.an-grid{grid-template-columns:1fr}}
 @media(max-width:600px){.an-mini-kpis{grid-template-columns:1fr}.an-row{grid-template-columns:1fr auto}}
+
+.numin{width:78px;padding:3px 6px;font:inherit;font-size:13px;text-align:right;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:inherit}
+.opt label em{font-style:normal;margin-left:4px}
