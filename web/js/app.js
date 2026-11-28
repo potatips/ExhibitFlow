@@ -323,7 +323,7 @@ function drawRealMap(c,t){
 /* chế độ Video đang xử lý: chưa vẽ map, chỉ chạy khi đã xong 100% (Realtime vẫn vẽ trực tiếp) */
 const mapOnHold=()=>S.running&&!LIVE&&S.mode==='batch'&&!camMode();
 function drawMapHold(c){const {x,w,h}=fit(c);x.clearRect(0,0,w,h);x.fillStyle='#FFFFFF';x.fillRect(0,0,w,h);x.fillStyle='#555C66';x.font='13px Segoe UI';x.textAlign='center';
-  x.fillText(`Đang xử lý ${Math.round(S.progress)}% — map chạy khi xong 100%`,w/2,h/2);MAP.shown=0;MAP.unit='người';setMapInfo('')}
+  x.fillText('Đang xử lý…',w/2,h/2);MAP.shown=0;MAP.unit='người';setMapInfo('')}
 function drawMapPanel(t,c=$('#map')){   // true nếu đã vẽ map thật; false thì vẽ khung giữ chỗ như cũ
   if(mapOnHold()){drawMapHold(c);return false}
   if(typeof SITEDATA!=='undefined'&&SITEDATA){drawSiteMap(c,t);return true}
