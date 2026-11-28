@@ -344,6 +344,7 @@ def test_create_state_store_factory(tmp_path: Path) -> None:
         st1.close()
 
     # Check RedisStore branch without requiring a live Redis server
+    pytest.importorskip("redis")
     s_redis = Settings(data_dir=tmp_path / "d2", redis_url="redis://127.0.0.1:6379/0")
     st2 = create_state_store(s_redis)
     try:

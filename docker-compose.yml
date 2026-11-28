@@ -1,0 +1,125 @@
+services:
+  gpu-demo:
+    build:
+      context: ./GPU_server
+      dockerfile: Dockerfile.demo
+    container_name: exhibitflow-gpu-demo
+    ports:
+      - "8001:8001"
+    environment:
+      PORT: "8001"
+      GPU_TOKEN: ${GPU_TOKEN:-demo-local-gpu-token}
+      DATA_DIR: /app/gpu_data
+      EF_DEMO_DURATION_S: ${EF_DEMO_DURATION_S:-2.5}
+    volumes:
+      - ./gpu_data:/app/gpu_data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import os,urllib.request; req=urllib.request.Request('http://127.0.0.1:8001/internal/health', headers={'X-GPU-Token': os.environ.get('GPU_TOKEN','')}); urllib.request.urlopen(req, timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  gpu-worker:
+    profiles: ["gpu"]
+    build:
+      context: ./GPU_server
+      dockerfile: Dockerfile
+    container_name: exhibitflow-gpu-worker
+    ports:
+      - "8001:8001"
+    environment:
+      PORT: "8001"
+      MODE: ${MODE:-full}
+      HF_TOKEN: ${HF_TOKEN:-}
+      GPU_TOKEN: ${GPU_TOKEN:-demo-local-gpu-token}
+      DATA_DIR: /workspace/gpu_data
+    volumes:
+      - ./gpu_data:/workspace/gpu_data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: exhibitflow-backend
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: "8000"
+      DATA_DIR: /app/backend_data
+      WEB_DIR: /app/web
+      GPU_WORKER_URL: ${GPU_WORKER_URL:-http://gpu-demo:8001}
+      GPU_TOKEN: ${GPU_TOKEN:-demo-local-gpu-token}
+      BACKEND_API_KEY: ${BACKEND_API_KEY:-}
+      REDIS_URL: ${REDIS_URL:-}
+      METRICS_PUBLIC: ${METRICS_PUBLIC:-1}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+    volumes:
+      - ./web:/app/web:ro
+      - ./backend_data:/app/backend_data
+    depends_on:
+      gpu-demo:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  redis:
+    profiles: ["redis"]
+    image: redis:7-alpine
+    container_name: exhibitflow-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:latest
+    container_name: exhibitflow-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - backend
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:latest
+    container_name: exhibitflow-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  redis_data:

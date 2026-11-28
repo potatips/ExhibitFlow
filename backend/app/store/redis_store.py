@@ -6,8 +6,6 @@ import json
 import time
 from typing import Any
 
-import redis
-
 from .base import (
     StateStore,
     alert_matches,
@@ -30,6 +28,8 @@ class RedisStore(StateStore):
         if client is not None:
             self._client = client
         elif url:
+            import redis
+
             self._client = redis.Redis.from_url(url, decode_responses=True)
         else:
             raise ValueError("RedisStore requires either url or an injected client")

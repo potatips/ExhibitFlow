@@ -60,7 +60,7 @@ def test_floorplan_service_imports_and_calibration_math() -> None:
     assert math.isclose(scaled["K"][1][2], 135.0, rel_tol=1e-6)
 
     # Homography mapper with identity
-    hm = homography_mapper(np.eye(3).tolist())
+    hm = homography_mapper(np.eye(3).tolist(), K)
     h_pts = hm([(1.5, 2.5)])
     assert math.isclose(float(h_pts[0, 0]), 1.5, abs_tol=1e-4)
     assert math.isclose(float(h_pts[0, 1]), 2.5, abs_tol=1e-4)

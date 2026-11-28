@@ -1,0 +1,158 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": true,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "HTTP Request Rate (RPS)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(exhibitflow_http_requests_total[1m]))",
+          "legendFormat": "HTTP {{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "id": 2,
+      "title": "HTTP Latency (P50 / P95)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(exhibitflow_http_request_duration_seconds_bucket[1m])))",
+          "legendFormat": "P50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(exhibitflow_http_request_duration_seconds_bucket[1m])))",
+          "legendFormat": "P95",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "id": 3,
+      "title": "GPU Worker Status & Queue Depth",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "exhibitflow_gpu_online",
+          "legendFormat": "GPU Online",
+          "refId": "A"
+        },
+        {
+          "expr": "exhibitflow_gpu_ready",
+          "legendFormat": "GPU Ready",
+          "refId": "B"
+        },
+        {
+          "expr": "exhibitflow_queue_depth",
+          "legendFormat": "Queue Depth",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100 },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 4,
+      "title": "Backend CPU (%) & GPU Compute (%)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "exhibitflow_backend_cpu_percent",
+          "legendFormat": "Backend CPU %",
+          "refId": "A"
+        },
+        {
+          "expr": "exhibitflow_gpu_utilization_percent",
+          "legendFormat": "GPU {{gpu_name}} %",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "decbytes" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 5,
+      "title": "Backend RAM & GPU VRAM",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "exhibitflow_backend_ram_used_bytes",
+          "legendFormat": "Backend RAM Used",
+          "refId": "A"
+        },
+        {
+          "expr": "exhibitflow_gpu_vram_used_gb * 1073741824",
+          "legendFormat": "GPU {{gpu_name}} VRAM Used",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "id": 6,
+      "title": "Jobs by Status & Alerts by Decision",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "exhibitflow_jobs_total",
+          "legendFormat": "Jobs {{status}}",
+          "refId": "A"
+        },
+        {
+          "expr": "exhibitflow_alerts_total",
+          "legendFormat": "Alerts {{decision}}",
+          "refId": "B"
+        }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["exhibitflow", "mlops"],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "title": "ExhibitFlow 3-Tier Overview",
+  "uid": "exhibitflow-overview"
+}

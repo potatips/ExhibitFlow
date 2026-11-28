@@ -48,11 +48,32 @@ def _wait_site_job_done(client: TestClient, job_id: str, timeout: float = 10.0) 
     raise AssertionError(f"Timed out waiting for site job {job_id}")
 
 
-def test_demo_has_zero_heavy_imports(client: TestClient) -> None:
-    r = client.get("/internal/health", headers=HEADERS)
-    assert r.status_code == 200
-    for forbidden in ("torch", "cv2", "numpy", "ultralytics", "exhibitflow_pipeline", "dashboard"):
-        assert forbidden not in sys.modules, f"Forbidden module imported in --demo mode: {forbidden}"
+def test_demo_has_zero_heavy_imports(tmp_path: Path) -> None:
+    import os
+    import subprocess
+
+    gpu_root = str(Path(__file__).resolve().parents[1])
+    code = (
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "from fastapi.testclient import TestClient\n"
+        "from worker.app import create_worker_app\n"
+        "app = create_worker_app(data_dir=Path(sys.argv[1]), demo=True, preload=True, token='t')\n"
+        "with TestClient(app) as c:\n"
+        "    r = c.get('/internal/health', headers={'X-GPU-Token': 't'})\n"
+        "    assert r.status_code == 200\n"
+        "forbidden = ('torch', 'cv2', 'numpy', 'ultralytics', 'exhibitflow_pipeline', 'dashboard')\n"
+        "found = [m for m in forbidden if m in sys.modules]\n"
+        "assert not found, f'Forbidden modules imported in --demo mode: {found}'\n"
+    )
+    env = dict(os.environ, PYTHONPATH=gpu_root)
+    proc = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path / "gpu_data")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"Subprocess failed:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
 
 
 def test_auth_enforced_on_internal_routes(client: TestClient) -> None:

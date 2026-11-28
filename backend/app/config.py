@@ -62,6 +62,10 @@ class Settings:
     health_interval_s: float = field(
         default_factory=lambda: float(os.environ.get("HEALTH_INTERVAL_S") or "2.0")
     )
+    metrics_public: bool = field(
+        default_factory=lambda: os.environ.get("METRICS_PUBLIC", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
     port: int = field(default_factory=lambda: int(os.environ.get("PORT") or "8000"))
 
     def __post_init__(self) -> None:

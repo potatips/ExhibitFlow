@@ -28,6 +28,7 @@ from .auth import AuthManager, require_header_auth, require_header_or_stream_tic
 from .config import Settings, load_settings
 from .dispatcher import JobDispatcher
 from .gpu_client import GPUClient, compute_gpu_ready
+from .metrics import MetricsRegistry, PrometheusASGIMiddleware
 from .models import (
     DEFAULT_STAGES,
     SITE_STAGES,
@@ -36,7 +37,7 @@ from .models import (
     GpuConfigResponse,
     GpuConfigUpdate,
 )
-from .sse import EventBroker
+from .sse import EventBroker, format_sse
 from .store import StateStore, create_state_store
 
 ALLOWED_VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
@@ -94,6 +95,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     gpu = GPUClient(base_url=gpu_url, token=gpu_token)
     broker = EventBroker()
     auth = AuthManager(api_key=cfg.backend_api_key, stream_ttl_s=cfg.stream_token_ttl_s)
+    metrics = MetricsRegistry()
     dispatcher = JobDispatcher(
         settings=cfg,
         store=store,
@@ -138,7 +140,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.gpu = gpu
     app.state.broker = broker
     app.state.auth = auth
+    app.state.metrics = metrics
     app.state.dispatcher = dispatcher
+
+    app.add_middleware(PrometheusASGIMiddleware, metrics=metrics)
 
     hdr_auth = [Depends(require_header_auth)]
     media_auth = [Depends(require_header_or_stream_ticket)]
@@ -494,9 +499,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/jobs/{job_id}/events", dependencies=media_auth)
     async def job_events(job_id: str) -> StreamingResponse:
         job = _enrich_job(_get_job_or_404(job_id))
-        initial: list[tuple[str, Any]] = [("status", job)]
         if job["status"] in ("done", "error", "cancelled"):
-            initial.append(("done", job))
+            async def _terminal_stream():
+                yield format_sse("status", job)
+                yield format_sse("done", job)
+
+            return StreamingResponse(
+                _terminal_stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        initial: list[tuple[str, Any]] = [("status", job)]
         return StreamingResponse(
             broker.subscribe(f"job:{job_id}", initial=initial),
             media_type="text/event-stream",
@@ -899,6 +912,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return _serve_artifact(cam_videos[safe_cam], media_type="video/mp4")
 
         raise HTTPException(404, "Không có video camera này")
+
+    @app.get("/metrics")
+    def prometheus_metrics(request: Request) -> Response:
+        if auth.enabled and not cfg.metrics_public and not auth.verify_request_header(request):
+            raise HTTPException(
+                status_code=401,
+                detail="Cần xác thực Backend (Authorization: Bearer hoặc X-Backend-Key)",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        payload = metrics.render_prometheus(
+            store=store,
+            broker=broker,
+            gpu_ready_fn=compute_gpu_ready,
+        )
+        return Response(
+            content=payload,
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+            headers={"Cache-Control": "no-store"},
+        )
 
     # Mount static web UI AFTER all /api routes
     if cfg.web_dir is not None and cfg.web_dir.is_dir():

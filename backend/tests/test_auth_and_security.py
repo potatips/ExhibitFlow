@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -250,10 +251,57 @@ def test_401_enforcement_and_stream_ticket_scopes(tmp_path: Path) -> None:
                     break
             assert any("event: status" in l for l in lines)
 
-        with client.stream("GET", f"/api/events?st={ticket}") as gresp:
-            assert gresp.status_code == 200
-            first_chunk = next(gresp.iter_lines())
-            assert first_chunk is not None
+        async def _read_sse_chunks(target_app, path_with_query: str, max_chunks: int = 1) -> tuple[int, str]:
+            path, _, qs = path_with_query.partition("?")
+            scope = {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": path,
+                "raw_path": path.encode("ascii"),
+                "query_string": qs.encode("ascii"),
+                "headers": [],
+                "client": ("127.0.0.1", 12345),
+                "server": ("testserver", 80),
+            }
+            status_code = 0
+            chunks: list[bytes] = []
+            done = asyncio.Event()
+
+            async def receive():
+                await done.wait()
+                return {"type": "http.disconnect"}
+
+            async def send(message):
+                nonlocal status_code
+                if message["type"] == "http.response.start":
+                    status_code = int(message["status"])
+                elif message["type"] == "http.response.body":
+                    body = message.get("body", b"")
+                    if body:
+                        chunks.append(body)
+                    if len(chunks) >= max_chunks or not message.get("more_body", False):
+                        done.set()
+
+            task = asyncio.create_task(target_app(scope, receive, send))
+            try:
+                await asyncio.wait_for(done.wait(), timeout=5.0)
+            finally:
+                done.set()
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            return status_code, b"".join(chunks).decode("utf-8", errors="replace")
+
+        if app.state.store.get_setting("gpu_health") is None:
+            app.state.store.set_setting("gpu_health", {"online": False})
+        g_status, g_body = asyncio.run(_read_sse_chunks(app, f"/api/events?st={ticket}", max_chunks=1))
+        assert g_status == 200
+        assert "gpu_status" in g_body
 
         # Stream ticket MUST BE REJECTED (401) on header-only endpoints!
         header_only_with_st = [
