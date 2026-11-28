@@ -1,0 +1,39 @@
+# ExhibitFlow GPU Worker — standalone dependencies (assumes PyTorch + CUDA already installed in Vast.ai/Colab/Docker base).
+# Install via: python scripts/install_deps.py [--cpu]
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+psutil>=5.9
+numpy
+pandas
+scipy
+opencv-python-headless
+pillow
+pyyaml
+packaging
+imageio-ffmpeg
+huggingface_hub
+transformers>=4.57
+accelerate>=1.0
+safetensors
+ultralytics==8.3.*
+rtmlib
+# onnxruntime-gpu[cuda,cudnn] is installed by scripts/install_deps.py to avoid CPU onnxruntime shadowing
+gdown
+lap
+cython_bbox
+loguru
+thop
+tabulate
+tensorboard
+yacs
+pycocotools
+scikit-image
+scikit-learn
+filterpy
+motmetrics
+shapely>=2.0
+brotli>=1.2
+lightgbm
+xgboost
+threadpoolctl

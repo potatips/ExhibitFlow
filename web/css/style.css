@@ -191,9 +191,12 @@ h2.sec{font-size:18px;font-weight:650;margin:2px 0 12px}
 button.chip{font:inherit;cursor:pointer}
 .chip.bad{color:#B0281F;border-color:#EBB9B3;background:#FBE9E6}
 .chip.bad b{background:var(--steal)}
+.chip.warn{color:#8F5B00;border-color:#EBCB80;background:#FFF6E0}
+.chip.warn b{background:var(--warn)}
 .chip.ok{color:#1E7A52;border-color:#B8E0CB;background:#E7F5EE}
 .clock{font-variant-numeric:tabular-nums}
 .top .chip.bad{background:#FBE9E6;color:#B0281F;border-color:#EBB9B3}
+.top .chip.warn{background:#FFF6E0;color:#8F5B00;border-color:#EBCB80}
 .top .chip.ok{background:#E7F5EE;color:#1E7A52;border-color:#B8E0CB}
 
 .kpis{grid-template-columns:repeat(4,1fr)}

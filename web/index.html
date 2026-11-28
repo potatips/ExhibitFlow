@@ -37,6 +37,14 @@
 <main>
 <!-- ============ DASHBOARD ============ -->
 <section id="v-dash">
+  <div class="conn-banner" id="connBanner" hidden>
+    <div class="conn-banner-content">
+      <div class="conn-banner-icon">⚠️</div>
+      <div class="conn-banner-text" id="connBannerText">Mất kết nối Backend</div>
+    </div>
+    <button class="btn sm pri" id="connBannerBtn">Mở Settings</button>
+  </div>
+
   <div class="kpis" id="kpis"></div>
 
   <div class="grid">
@@ -119,9 +127,27 @@
     </div>
   </section>
 
-  <div class="grid2">
+  <!-- LỊCH SỬ PHÂN TÍCH (PAST JOBS) -->
+  <div class="card" id="jobsCard" style="margin-top:16px">
+    <h3>Lịch sử phân tích <span class="sp"></span>
+      <div class="filters" id="jobsFilters">
+        <button class="tg on" data-jf="all">Tất cả</button>
+        <button class="tg" data-jf="done">Hoàn tất</button>
+        <button class="tg" data-jf="active">Đang chạy / Hàng đợi</button>
+        <button class="tg" data-jf="error">Lỗi</button>
+      </div>
+      <button class="btn sm" id="jobsRefreshBtn">Làm mới</button>
+    </h3>
+    <div class="jobs-table-wrap" id="jobsList"></div>
+  </div>
+
+  <div class="grid2" style="margin-top:16px">
     <div class="card">
       <h3>Cảnh báo hành vi <span class="sp"></span>
+        <div class="filters" id="alertScopeSel" title="Phạm vi cảnh báo: video hiện tại hoặc toàn bộ lịch sử">
+          <button class="tg on" data-scope="current">Video hiện tại</button>
+          <button class="tg" data-scope="global">Tất cả lịch sử</button>
+        </div>
         <div class="filters" id="filters">
           <button class="tg on" data-f="all">Tất cả</button><button class="tg" data-f="ANOMALY">Bất thường</button><button class="tg" data-f="CANDIDATE">Cần xác nhận</button><button class="tg" data-f="NORMAL">Đã loại</button>
         </div>
@@ -135,12 +161,24 @@
 <section id="v-set" hidden>
   <div class="setgrid">
     <div class="card">
-      <h3>Kết nối backend (Kaggle / Colab)</h3>
-      <div class="opt"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="beDirect"> Chạy trực tiếp trên GPU server (không cần URL backend)</label></div>
+      <h3>Kết nối máy chủ Backend (CPU FastAPI)</h3>
+      <div class="opt"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="beDirect"> Chạy trực tiếp trên máy chủ backend (cùng domain / origin)</label></div>
       <div class="opt"><label>URL backend <span id="beMsg">chưa kết nối</span></label>
-        <input type="text" id="beUrl" class="txt" placeholder="https://xxxx.trycloudflare.com" spellcheck="false"></div>
+        <input type="text" id="beUrl" class="txt" placeholder="http://127.0.0.1:8000 hoặc https://backend..." spellcheck="false"></div>
+      <div class="opt"><label>Mã truy cập Backend (API Key)</label>
+        <input type="password" id="beKey" class="txt" placeholder="Mã truy cập Backend (nếu bật xác thực)" spellcheck="false"></div>
+      <div class="opt"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="beRememberKey"> Ghi nhớ mã truy cập sau khi đóng trình duyệt</label></div>
       <div class="row"><button class="btn pri" id="beBtn">Kết nối</button><button class="btn" id="beOff">Ngắt</button></div>
-      <p class="note">Chạy notebook <code>exhibitflow_kaggle_server.ipynb</code> trên Kaggle, copy URL in ở ô "Mở đường hầm" rồi dán vào đây. Nếu bạn mở dashboard bằng chính link của GPU server (vd. Vast <code>http://IP:port</code>), bật ô "Chạy trực tiếp" ở trên: trang sẽ gọi API cùng địa chỉ. Kết nối xong, quay lại Dashboard để Upload hoặc nhập đường dẫn video và bấm Phân tích.</p>
+      <p class="note">Máy chủ backend (FastAPI CPU siêu nhẹ) điều phối hàng đợi, lưu trữ lịch sử phân tích, video và cảnh báo. Mã truy cập Backend là khoá riêng biệt với <code>X-GPU-Token</code>.</p>
+    </div>
+    <div class="card">
+      <h3>Kết nối GPU Worker (Vast.ai / cloudflared)</h3>
+      <div class="opt"><label>GPU Worker URL <span id="gpuMsg">chưa kết nối</span></label>
+        <input type="text" id="gpuUrl" class="txt" placeholder="https://xxxx.trycloudflare.com hoặc http://IP:8001" spellcheck="false"></div>
+      <div class="opt"><label>X-GPU-Token</label>
+        <input type="password" id="gpuToken" class="txt" placeholder="Mã token bảo mật GPU" spellcheck="false"></div>
+      <div class="row"><button class="btn pri" id="gpuSaveBtn">Lưu &amp; Kiểm tra</button></div>
+      <p class="note">GPU Worker chạy các mô hình AI nặng (YOLO, ByteTrack, Qwen3-VL, Floorplan). Backend sẽ tự động chuyển việc sang GPU Worker. Khi GPU ngoại tuyến, bạn vẫn xem lại được toàn bộ video, kết quả và cảnh báo đã lưu trên backend.</p>
     </div>
     <div class="card">
       <h3>Camera (Realtime)</h3>

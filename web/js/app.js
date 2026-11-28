@@ -160,26 +160,147 @@ function drawMap(c,o){
 
 /* ===================== Dashboard ===================== */
 const CFG=window.EF_CONFIG||{demo:false};
-const S={t:0,playing:false,speed:1,videoURL:null,file:null,filter:'all',loaded:false,running:false,cancel:false,jobId:null,
+const S={t:0,playing:false,speed:1,videoURL:null,file:null,filter:'all',alertScope:'current',loaded:false,running:false,cancel:false,jobId:null,
   progress:0,srcName:'',layers:{boxes:true,skel:false,labels:true,art:false},mlayers:{trails:true,zones:true,heat:false,all:false},mapTab:'events',heatMode:'presence'};
 const vid=$('#vid');
 let LIVE=null;
+let GLOBAL_ALERTS=[];
+let JOBS_FILTER='all';
+let globalSSE=null;
 S.mode=(()=>{try{return localStorage.getItem('ef_mode')==='rt'?'rt':'batch'}catch{return 'batch'}})();S.liveSim=false;
 const EMPTY={meta:{duration:60,camera_id:'',width:1280,height:720,nw:960},arts:[],tracks:[],events:[]};
 
 /* ---------- Backend ---------- */
 const NGROK_H={'ngrok-skip-browser-warning':'1'};
 async function errText(r){try{const j=await r.json();return j.detail||JSON.stringify(j)}catch{return r.status+' '+r.statusText}}
-const API={direct:(()=>{try{return localStorage.getItem('ef_direct')==='1'}catch{return false}})(),
-  base:(()=>{try{return localStorage.getItem('ef_direct')==='1'?'':(localStorage.getItem('ef_api')||'')}catch{return ''}})(),ok:false,
-  async f(p,o={}){const r=await fetch(this.base+p,{...o,headers:{...NGROK_H,...(o.headers||{})}});if(!r.ok)throw new Error(await errText(r));return r},
-  async ping(){this.ok=false;
-    /* Chế độ trực tiếp / chưa nhập URL: thử cùng origin (trang được chính GPU server phục vụ) */
-    if(this.direct||this.base||location.protocol!=='file:'){try{const r=await fetch(this.base+'/api/health',{headers:NGROK_H,signal:AbortSignal.timeout(6000)});this.ok=r.ok}catch{this.ok=false}}
-    const c=$('#beChip');c.classList.toggle('ok',this.ok);c.classList.toggle('bad',!this.ok);
-    c.querySelector('span').textContent=this.ok?'Đã kết nối':'Mất kết nối';
-    $('#beMsg').textContent=this.ok?'đã kết nối ✓':(this.direct?'GPU server cùng origin: không phản hồi':this.base?'không kết nối được':'chưa kết nối');
-    pollSystem();if(typeof loadSites==='function')loadSites()},
+let sseErrorCount=0;
+let sseFallbackPolling=false;
+
+const API={
+  direct:(()=>{try{return localStorage.getItem('ef_direct')==='1'}catch{return false}})(),
+  base:(()=>{
+    try{
+      if(localStorage.getItem('ef_direct')==='1')return '';
+      const stored=localStorage.getItem('ef_api');
+      if(stored!==null&&stored!=='')return stored;
+      if(location.protocol!=='file:')return '';
+      return '';
+    }catch{return ''}
+  })(),
+  key:(()=>{
+    try{
+      return (sessionStorage.getItem('ef_be_key')||localStorage.getItem('ef_be_key')||'').trim();
+    }catch{return ''}
+  })(),
+  rememberKey:(()=>{
+    try{return localStorage.getItem('ef_be_remember_key')==='1'}catch{return false}
+  })(),
+  ok:false,
+  authRequired:false,
+  authenticated:true,
+  authError:false,
+  streamTicket:'',
+  streamTicketExpiresAt:0,
+
+  async f(p,o={}){
+    const headers={...NGROK_H,...(o.headers||{})};
+    if(this.key){
+      headers['Authorization']='Bearer '+this.key;
+    }
+    const url=(p.startsWith('http://')||p.startsWith('https://'))?p:(this.base+p);
+    const r=await fetch(url,{...o,headers});
+    if(r.status===401){
+      this.authError=true;
+      this.authenticated=false;
+      disconnectGlobalSSE();
+      updateChipAndBanner({ok:true,auth_required:true,authenticated:false});
+      throw new Error('401 Chưa xác thực: Cần nhập Mã truy cập Backend (API Key)');
+    }
+    if(!r.ok)throw new Error(await errText(r));
+    return r;
+  },
+
+  async ensureStreamTicket(){
+    if(!this.authRequired)return "";
+    if(this.streamTicket&&this.streamTicketExpiresAt&&Date.now()<this.streamTicketExpiresAt-60000){
+      return this.streamTicket;
+    }
+    if(!this.ok||!this.authenticated)return "";
+    try{
+      const r=await this.f('/api/auth/stream-token',{method:'POST'});
+      const j=await r.json();
+      this.authRequired=!!j.auth_required;
+      if(!this.authRequired){
+        this.streamTicket="";
+        return "";
+      }
+      this.streamTicket=j.ticket||"";
+      this.streamTicketExpiresAt=j.expires_at?(j.expires_at*1000):(Date.now()+(j.expires_in||600)*1000);
+      return this.streamTicket;
+    }catch{
+      return this.streamTicket||"";
+    }
+  },
+
+  async mediaUrl(path){
+    if(!path)return '';
+    const base=this.base||'';
+    let url=(path.startsWith('http://')||path.startsWith('https://')||path.startsWith('blob:')||path.startsWith('data:'))?path:(base+(path.startsWith('/')?'':'/')+path);
+    if(url.startsWith('blob:')||url.startsWith('data:'))return url;
+    if(!this.authRequired)return url;
+    const ticket=await this.ensureStreamTicket();
+    if(!ticket)return url;
+    const sep=url.includes('?')?'&':'?';
+    return url+sep+'st='+encodeURIComponent(ticket);
+  },
+
+  async ping(){
+    this.ok=false;let health=null;
+    const headers={...NGROK_H};
+    if(this.key)headers['Authorization']='Bearer '+this.key;
+
+    try{
+      const target=(this.base||'')+'/api/health';
+      const r=await fetch(target,{headers,signal:AbortSignal.timeout(6000)});
+      if(r.ok){
+        health=await r.json();
+        if(health&&typeof health==='object'&&health.ok===true){
+          this.ok=true;
+          this.authRequired=!!health.auth_required;
+          this.authenticated=health.authenticated!==false;
+          this.authError=this.authRequired&&!this.authenticated;
+        }
+      }
+    }catch{}
+
+    const c=$('#beChip');c.classList.remove('ok','warn','bad');
+
+    if(!this.ok||!health){
+      this.authError=false;
+      c.classList.add('bad');c.querySelector('span').textContent='Mất kết nối Backend';
+      c.title='Mở Settings để kết nối backend';
+      $('#beMsg').textContent=this.direct?'Backend cùng origin không phản hồi':(this.base?'không kết nối được':'chưa kết nối (nhập URL Backend)');
+      const gmsg=$('#gpuMsg');if(gmsg){gmsg.textContent='chưa kết nối backend';gmsg.style.color='var(--muted)'}
+      disconnectGlobalSSE();
+      updateChipAndBanner(null);
+    }else{
+      if(this.authRequired&&!this.authenticated){
+        c.classList.add('bad');c.querySelector('span').textContent='Cần xác thực Backend';
+        c.title='Mở Settings để nhập Mã truy cập Backend (API Key)';
+        $('#beMsg').textContent='yêu cầu mã truy cập';
+        disconnectGlobalSSE();
+        updateChipAndBanner(health);
+      }else{
+        $('#beMsg').textContent='đã kết nối ✓';
+        updateChipAndBanner(health);
+        connectGlobalSSE();
+        loadGpuConfig(health);
+        if(typeof loadSites==='function')loadSites();
+        if(typeof loadJobs==='function')loadJobs();
+      }
+    }
+    pollSystem();
+  },
   async system(){return (await this.f('/api/system')).json()},
   async start(fd){return (await (await this.f('/api/jobs',{method:'POST',body:fd})).json()).job_id},
   async job(id){return (await this.f(`/api/jobs/${id}`)).json()},
@@ -187,6 +308,152 @@ const API={direct:(()=>{try{return localStorage.getItem('ef_direct')==='1'}catch
   async cancel(id){try{await this.f(`/api/jobs/${id}/cancel`,{method:'POST'})}catch{}},
   async blob(id,p){try{return URL.createObjectURL(await (await this.f(`/api/jobs/${id}/${p}`)).blob())}catch{return null}}
 };
+
+function updateChipAndBanner(health){
+  const c=$('#beChip');
+  const banner=$('#connBanner');
+  const bText=$('#connBannerText');
+
+  if(!API.ok||!health){
+    c.className='chip bad';
+    c.querySelector('span').textContent='Mất kết nối Backend';
+    c.title='Mở Settings để kết nối backend';
+    if(banner){
+      banner.hidden=false;
+      banner.className='conn-banner bad';
+      if(bText)bText.textContent='Mất kết nối Backend hoặc URL Cloudflare Tunnel đã đổi. Hãy kiểm tra terminal chạy backend/launch.py, copy URL HTTPS mới rồi dán vào Settings.';
+    }
+    return;
+  }
+
+  if(API.authRequired&&!API.authenticated){
+    c.className='chip bad';
+    c.querySelector('span').textContent='Cần xác thực Backend';
+    c.title='Mở Settings để nhập Mã truy cập Backend (API Key)';
+    if(banner){
+      banner.hidden=false;
+      banner.className='conn-banner bad';
+      if(bText)bText.textContent='Máy chủ Backend yêu cầu xác thực. Vui lòng nhập Mã truy cập Backend (API Key) trong Settings.';
+    }
+    return;
+  }
+
+  const gpu=health.gpu||{};
+  const isGpuOnline=!!gpu.online;
+  const isGpuReady=(gpu.ready!==undefined)?!!gpu.ready:(isGpuOnline&&(gpu.demo||(gpu.models&&gpu.models.state==='ready')));
+  const modelsState=(gpu.models&&gpu.models.state)||'';
+
+  c.classList.remove('ok','warn','bad');
+
+  if(!isGpuOnline){
+    c.classList.add('warn');
+    c.querySelector('span').textContent='Backend sẵn sàng · GPU ngoại tuyến';
+    c.title='Xem lại lịch sử và cảnh báo vẫn hoạt động khi GPU ngoại tuyến. Bấm để cấu hình GPU.';
+    if(banner){
+      banner.hidden=false;
+      banner.className='conn-banner warn';
+      if(bText)bText.textContent='GPU Worker đang ngoại tuyến hoặc đã đổi URL. Lịch sử phân tích & cảnh báo vẫn hoạt động bình thường. Để phân tích video mới, kiểm tra GPU worker hoặc cập nhật URL trong Settings.';
+    }
+  }else if(!isGpuReady){
+    c.classList.add('warn');
+    if(modelsState==='loading'){
+      c.querySelector('span').textContent='Backend sẵn sàng · GPU đang nạp model';
+    }else{
+      c.querySelector('span').textContent='Backend sẵn sàng · GPU lỗi model';
+    }
+    c.title=`GPU Worker: ${(gpu.models&&gpu.models.msg)||'đang tải mô hình'}`;
+    if(banner){
+      banner.hidden=false;
+      banner.className='conn-banner warn';
+      if(bText)bText.textContent=`GPU Worker đang tải mô hình (${(gpu.models&&gpu.models.msg)||'vui lòng chờ…'}).`;
+    }
+  }else{
+    c.classList.add('ok');
+    let txt='Backend + GPU sẵn sàng';
+    if(gpu.busy)txt='Backend + GPU sẵn sàng (GPU đang bận)';
+    else if(gpu.demo)txt='Backend + GPU sẵn sàng (Demo)';
+    c.querySelector('span').textContent=txt;
+    c.title=`GPU Worker trực tuyến tại ${gpu.url||'remote'}`+(health.queue_length!=null?` · Hàng đợi: ${health.queue_length}`:'');
+    if(banner)banner.hidden=true;
+  }
+
+  const msg=$('#gpuMsg');
+  if(msg){
+    if(isGpuOnline){
+      msg.textContent='đang hoạt động ✓'+(gpu.demo?' (demo)':gpu.busy?' (bận)':'')+(gpu.url?' · '+gpu.url:'');
+      msg.style.color='var(--ok)';
+    }else{
+      msg.textContent='ngoại tuyến ✗'+(gpu.error?' ('+gpu.error+')':'');
+      msg.style.color='var(--warn)';
+    }
+  }
+}
+
+async function loadGpuConfig(health){
+  if(!API.ok||!API.authenticated)return;
+  try{
+    const cfg=await(await API.f('/api/config/gpu')).json();
+    const urlInput=$('#gpuUrl');const tokInput=$('#gpuToken');
+    if(urlInput&&document.activeElement!==urlInput){
+      if(!urlInput.value||urlInput.value===cfg.url)urlInput.value=cfg.url||'';
+    }
+    if(tokInput){
+      tokInput.placeholder=cfg.has_token?'đã lưu (nhập mới để đổi)':'Mã token bảo mật GPU';
+      tokInput.value='';
+    }
+    updateChipAndBanner(health);
+  }catch{}
+}
+
+async function connectGlobalSSE(){
+  if(!API.ok||!API.authenticated||typeof EventSource==='undefined'){disconnectGlobalSSE();return}
+  if(globalSSE)return;
+  if(sseFallbackPolling)return;
+
+  try{
+    const url=await API.mediaUrl('/api/events');
+    globalSSE=new EventSource(url);
+    globalSSE.addEventListener('gpu_status',e=>{
+      try{
+        const gpu=JSON.parse(e.data);
+        updateChipAndBanner({ok:true,authenticated:true,auth_required:API.authRequired,gpu});
+      }catch{}
+    });
+    globalSSE.addEventListener('job_update',e=>{
+      try{
+        if(typeof loadJobs==='function')loadJobs();
+      }catch{}
+    });
+    globalSSE.addEventListener('alert_reviewed',e=>{
+      try{const evData=JSON.parse(e.data);applyAlertReviewLive(evData)}catch{}
+    });
+    globalSSE.onerror=()=>{
+      sseErrorCount++;
+      if(sseErrorCount>=3){
+        sseFallbackPolling=true;
+        disconnectGlobalSSE();
+      }
+    };
+  }catch{globalSSE=null}
+}
+function disconnectGlobalSSE(){
+  if(globalSSE){try{globalSSE.close()}catch{}globalSSE=null}
+}
+function updateChipAndGpuUI(gpu){
+  updateChipAndBanner({ok:true,authenticated:true,auth_required:API.authRequired,gpu});
+}
+function applyAlertReviewLive(evData){
+  if(!evData)return;
+  if(DATA&&DATA.events){
+    const ev=DATA.events.find(x=>String(x.id)===String(evData.event_id)||String(x.alert_id)===String(evData.alert_id)||(S.jobId&&`${S.jobId}:${x.id}`===String(evData.alert_id)));
+    if(ev)ev.review=evData.review;
+  }
+  if(GLOBAL_ALERTS&&GLOBAL_ALERTS.length){
+    const item=GLOBAL_ALERTS.find(x=>x.alert_id===evData.alert_id||(x.job_id===evData.job_id&&String(x.event_id)===String(evData.event_id)));
+    if(item)item.review=evData.review;
+  }
+  renderAlerts();
+}
 
 /* ---------- Nhật ký, trạng thái ---------- */
 /* Bỏ dòng thanh tiến trình tải model (tqdm / huggingface: "Fetching 1 files: 100%|███| …") */
@@ -232,8 +499,49 @@ function thumb(e){const c=document.createElement('canvas');c.width=240;c.height=
   x.strokeStyle=col;x.lineWidth=4;x.beginPath();x.moveTo(108,78);x.lineTo(138,76);x.stroke();return c.toDataURL()}
 function noImg(){const c=document.createElement('canvas');c.width=240;c.height=150;const x=c.getContext('2d');x.fillStyle='#18232b';x.fillRect(0,0,240,150);
   x.fillStyle='#A9B4BA';x.font='13px Segoe UI';x.textAlign='center';x.fillText('Không có ảnh bằng chứng',120,78);return c.toDataURL()}
-function renderAlerts(){
-  const list=listEvents().filter(e=>S.filter==='all'||e.decision===S.filter),box=$('#alerts');
+async function renderAlerts(){
+  const box=$('#alerts');
+  if(!box)return;
+
+  if(S.alertScope==='global'){
+    if(!API.ok){
+      box.innerHTML='<p class="note">Chưa kết nối backend. Kết nối backend trong Settings để xem tất cả lịch sử cảnh báo.</p>';
+      return;
+    }
+    box.innerHTML='<p class="note">Đang tải lịch sử cảnh báo…</p>';
+    try{
+      let q='/api/alerts?limit=100';
+      if(S.filter!=='all')q+=`&decision=${encodeURIComponent(S.filter)}`;
+      const res=await(await API.f(q)).json();
+      GLOBAL_ALERTS=res.items||[];
+      if(!GLOBAL_ALERTS.length){
+        box.innerHTML='<p class="note empty">Không có cảnh báo nào phù hợp bộ lọc.</p>';
+        return;
+      }
+      const cards=await Promise.all(GLOBAL_ALERTS.map(async a=>{
+        const lab=evLabel(a);const col=evColor(a);
+        const imgUrl=a.img_url?(await API.mediaUrl(a.img_url)):noImg();
+        const startStr=a.start_s!=null?fmt(a.start_s):'0:00';
+        const endStr=a.end_s!=null?fmt(a.end_s):'0:00';
+        const confStr=a.confidence==null?'—':((a.confidence*100)|0)+'%';
+        const jobLabel=a.job_name||a.job_id||'';
+        const camLabel=a.cam?` · ${a.cam}`:'';
+        const btn=a.review?`<span class="st">✓ ${a.review==='ok'?'Đã xác nhận':'Đã bỏ qua'}</span>`
+          :`<button class="btn sm" data-global-rv="ok" data-alert-id="${esc(a.alert_id)}">Xác nhận</button><button class="btn sm" data-global-rv="no" data-alert-id="${esc(a.alert_id)}">Bỏ qua</button>`;
+        return `<div class="al" data-alert-id="${esc(a.alert_id)}" style="--c:${col}"><img src="${imgUrl}" alt="">
+          <div><div class="hd"><span class="badge">${lab}</span><b>Visitor #${a.track_id!=null?a.track_id:'?'}</b><span class="meta">→ ${esc(a.artifact_id||'Hiện vật')}</span></div>
+          <div class="meta">${startStr}–${endStr} · ${esc(jobLabel)}${esc(camLabel)} · VLM tin cậy ${confStr}</div>
+          <div class="why">“${esc(a.evidence||'')}”</div><div class="acts">${btn}</div></div></div>`;
+      }));
+      box.innerHTML=cards.join('');
+    }catch(err){
+      box.innerHTML=`<p class="note err">Lỗi tải cảnh báo: ${esc(err.message)}</p>`;
+    }
+    return;
+  }
+
+  // S.alertScope === 'current'
+  const list=listEvents().filter(e=>S.filter==='all'||e.decision===S.filter);
   if(!list.length){box.innerHTML='<p class="note empty">Chưa có cảnh báo.</p>';return}
   box.innerHTML=list.map(e=>{const a=DATA.arts.find(a=>a.id===e.art)||{name:'Hiện vật '+e.art};
     const lab=e.provisional?'Đang chạm':evLabel(e),col=e.provisional?'#C98A00':evColor(e);
@@ -243,7 +551,8 @@ function renderAlerts(){
     return`<div class="al" data-id="${e.id}" style="--c:${col}"><img src="${e.img}" data-seek="${e.start}" alt="">
       <div><div class="hd"><span class="badge">${lab}</span><b>Visitor #${e.track}</b><span class="meta">→ ${esc(a.name)}</span></div>
       <div class="meta">${fmt(e.start)}–${fmt(e.end)} · VLM tin cậy ${e.conf==null?'—':((e.conf*100)|0)+'%'}</div>
-      <div class="why">“${esc(e.reason)}”</div><div class="acts">${btn}</div></div></div>`}).join('')}
+      <div class="why">“${esc(e.reason)}”</div><div class="acts">${btn}</div></div></div>`}).join('');
+}
 function renderTimeline(){const tl=$('#tl');tl.querySelectorAll('.seg').forEach(n=>n.remove());
   listEvents().forEach(e=>{const d=document.createElement('div');d.className='seg';d.style.cssText=`left:${e.start/D*100}%;width:${(e.end-e.start)/D*100}%;background:${evColor(e)}`;d.title=`#${e.track} ${evLabel(e)}`;d.dataset.seek=e.start;tl.append(d)});
   const o=DER.occ;if(DATA.real||!o.length||Math.max(...o)===0){$('#occ').innerHTML='';return}
@@ -385,24 +694,86 @@ async function runDemo(){
 async function runLive(src){
   const fd=new FormData();if(S.file)fd.append('video',S.file);else fd.append('source',src);
   fd.append('options',JSON.stringify({conf:+$('#conf').value}));
-  setStatus('Đang chạy');logLine(S.file?'Tải video lên backend…':'Gửi đường dẫn / URL tới backend…');
-  const id=await API.start(fd);S.jobId=id;const seen=new Set();let key=null;
+  setStatus('Đang gửi yêu cầu');logLine(S.file?'Tải video lên backend…':'Gửi đường dẫn / URL tới backend…');
+  const resSubmit=await(await API.f('/api/jobs',{method:'POST',body:fd})).json();
+  const id=resSubmit.job_id;S.jobId=id;const seen=new Set();let key=null;
   resetMap();mapLoop(id,()=>S.running&&S.jobId===id);
-  for(;;){
-    if(S.cancel){await API.cancel(id);return stopped()}
-    const j=await API.job(id);
-    S.progress=j.status==='done'?100:(Math.max(0,j.stage)+j.progress)/j.stages.length*100;
-    stageLine(j,seen);renderKpis();
-    if(j.status==='done'){key=j.key;break}
-    if(j.status==='error')throw new Error(j.error);
-    if(j.status==='cancelled')return stopped();
-    await sleep(2000)}
-  const res=await API.result(id),imgs={};
-  await Promise.all(res.events.filter(e=>e.task).map(async e=>{imgs[e.event_id]=await API.blob(id,`files/${key}/vlm_inputs/${e.task}/sheet.jpg`)}));
-  const videoURL=await API.blob(id,'video');
+
+  let jobSSE=null;let lastJobData=null;
+  if(typeof EventSource!=='undefined'){
+    try{
+      jobSSE=new EventSource(await API.mediaUrl('/api/jobs/'+id+'/events'));
+      jobSSE.addEventListener('status',e=>{try{lastJobData=JSON.parse(e.data)}catch{}});
+      jobSSE.addEventListener('job_update',e=>{try{lastJobData=JSON.parse(e.data)}catch{}});
+      jobSSE.addEventListener('done',e=>{try{lastJobData=JSON.parse(e.data)}catch{}});
+    }catch{}
+  }
+
+  try{
+    for(;;){
+      if(S.cancel){if(jobSSE)jobSSE.close();await API.cancel(id);return stopped()}
+      let j=lastJobData;
+      if(!j||(j.status!=='done'&&j.status!=='error'&&j.status!=='cancelled')){
+        try{j=await API.job(id)}catch{}
+      }
+      if(j){
+        if(j.status==='queued'){
+          setStatus(`Hàng đợi (#${j.queue_position||1})`);
+          logLine(`Đang xếp hàng (#${j.queue_position||1}) chờ GPU…`);
+          S.progress=5;renderKpis();
+        }else if(j.status==='running'){
+          setStatus('Đang chạy');
+          S.progress=(Math.max(0,j.stage)+(j.progress||0))/((j.stages&&j.stages.length)||5)*100;
+          stageLine(j,seen);renderKpis();
+        }else if(j.status==='syncing'){
+          setStatus('Đang đồng bộ');
+          logLine('Đang đồng bộ kết quả về máy chủ…');
+          S.progress=98;renderKpis();
+        }else if(j.status==='done'){
+          key=j.key;break;
+        }else if(j.status==='error'){
+          throw new Error(j.error||'Xử lý thất bại');
+        }else if(j.status==='cancelled'){
+          return stopped();
+        }
+      }
+      await sleep(1500);
+    }
+  }finally{
+    if(jobSSE)jobSSE.close();
+  }
+
+  const res=await API.result(id);
+  let savedAlerts=[];
+  try{
+    const alRes=await(await API.f(`/api/alerts?job_id=${id}&limit=500`)).json();
+    savedAlerts=alRes.items||[];
+  }catch{}
+  const alertMap=new Map();
+  savedAlerts.forEach(a=>{if(a.event_id!=null)alertMap.set(String(a.event_id),a)});
+
+  const imgs={};
+  await Promise.all((res.events||[]).filter(e=>e.task||alertMap.has(String(e.event_id))).map(async e=>{
+    const a=alertMap.get(String(e.event_id));
+    if(a&&a.img_url)imgs[e.event_id]=await API.mediaUrl(a.img_url);
+    else if(e.task)imgs[e.event_id]=await API.blob(id,`files/${key}/vlm_inputs/${e.task}/sheet.jpg`);
+  }));
+
+  const videoURL=await API.mediaUrl(`/api/jobs/${id}/video`);
   await pollMap(id,()=>true,true);
-  loadData(fromResult(res,e=>imgs[e.event_id]),videoURL,{liveVideo:true,name:S.file?S.file.name:(src.split(/[\/]/).pop()||undefined)});
-  setStatus('Hoàn tất');logLine('Hoàn tất.');return true}
+  const dataObj=fromResult(res,e=>imgs[e.event_id]);
+  await Promise.all((dataObj.events||[]).map(async e=>{
+    const a=alertMap.get(String(e.id));
+    if(a&&a.review)e.review=a.review;
+    if(a&&a.img_url&&!imgs[e.id])e.img=await API.mediaUrl(a.img_url);
+  }));
+
+  loadData(dataObj,videoURL,{liveVideo:true,name:S.file?S.file.name:(src.split(/[\/]/).pop()||undefined)});
+  setStatus('Hoàn tất');logLine('Hoàn tất.');
+  if(typeof loadJobs==='function')loadJobs();
+  return true;
+}
+
 /* ---------- Realtime ---------- */
 function prepareLiveView(name){
   S.videoURL=null;vid.removeAttribute('src');vid.hidden=true;$('#vmsg').hidden=true;
@@ -436,32 +807,99 @@ async function runRealtime(src,cam){
   const fd=new FormData();if(!cam&&S.file)fd.append('video',S.file);else fd.append('source',src);
   fd.append('options',JSON.stringify({conf:+$('#conf').value,realtime:true,camera:!!cam}));
   setStatus('Realtime: đang khởi động');logLine('Realtime: gửi yêu cầu tới backend…');
-  const id=await API.start(fd);S.jobId=id;
+  const resSubmit=await(await API.f('/api/jobs',{method:'POST',body:fd})).json();
+  const id=resSubmit.job_id;S.jobId=id;
   prepareLiveView(cam?camChoice().name:(S.file?S.file.name:src));LIVE={id,after:0,meta:null,banner:null};const mine=LIVE;resetMap();mapLoop(id,()=>LIVE===mine);
-  let stop=false;const img=$('#liveimg');
-  const frames=(async()=>{while(!stop&&LIVE===mine){
-    try{const u=await API.blob(id,'live');if(u&&LIVE===mine){const old=img.src;img.src=u;if(old&&old.startsWith('blob:'))URL.revokeObjectURL(old)}}catch{}
-    await sleep(120)}})();
+
+  let stop=false;const img=$('#liveimg');let mjpegFailed=false;
+  img.src=await API.mediaUrl(`/api/jobs/${id}/live/stream`);
+  img.onerror=()=>{
+    if(!mjpegFailed&&!stop&&LIVE===mine){
+      mjpegFailed=true;
+      framesPoll();
+    }
+  };
+  const framesPoll=async()=>{
+    while(!stop&&LIVE===mine&&mjpegFailed){
+      try{const u=await API.blob(id,'live');if(u&&LIVE===mine){const old=img.src;img.src=u;if(old&&old.startsWith('blob:'))URL.revokeObjectURL(old)}}catch{}
+      await sleep(120);
+    }
+  };
+
+  let jobSSE=null;let lastJobData=null;
+  if(typeof EventSource!=='undefined'){
+    try{
+      jobSSE=new EventSource(await API.mediaUrl('/api/jobs/'+id+'/events'));
+      jobSSE.addEventListener('status',e=>{try{lastJobData=JSON.parse(e.data)}catch{}});
+      jobSSE.addEventListener('job_update',e=>{try{lastJobData=JSON.parse(e.data)}catch{}});
+      jobSSE.addEventListener('live',e=>{try{const le=JSON.parse(e.data);if(le&&LIVE===mine)applyLive(le)}catch{}});
+      jobSSE.addEventListener('done',e=>{try{lastJobData=JSON.parse(e.data)}catch{}});
+    }catch{}
+  }
+
   const seen=new Set();let key=null;
-  try{for(;;){
-    if(S.cancel){await API.cancel(id);stop=true;LIVE=null;return stopped()}
-    const j=await API.job(id);
-    stageLine(j,seen);
-    if(j.stage>=3||j.status==='done')setStatus('Realtime · LIVE');
-    let le=null;try{le=await(await API.f(`/api/jobs/${id}/live/events?after=${mine.after}`)).json()}catch{}
-    if(le&&LIVE===mine)applyLive(le);
-    if(j.status==='done'){key=j.key;break}
-    if(j.status==='error')throw new Error(j.error);
-    if(j.status==='cancelled'){stop=true;LIVE=null;return stopped()}
-    await sleep(1000)}
+  try{
+    for(;;){
+      if(S.cancel){if(jobSSE)jobSSE.close();await API.cancel(id);stop=true;LIVE=null;return stopped()}
+      let j=lastJobData;
+      if(!j||(j.status!=='done'&&j.status!=='error'&&j.status!=='cancelled')){
+        try{j=await API.job(id)}catch{}
+      }
+      if(j){
+        if(j.status==='queued'){
+          setStatus(`Hàng đợi (#${j.queue_position||1})`);
+          logLine(`Đang xếp hàng (#${j.queue_position||1}) chờ GPU…`);
+        }else if(j.status==='running'){
+          stageLine(j,seen);
+          if(j.stage>=3||j.status==='done')setStatus('Realtime · LIVE');
+        }else if(j.status==='syncing'){
+          setStatus('Đang đồng bộ');logLine('Đang đồng bộ kết quả về máy chủ…');
+        }else if(j.status==='done'){
+          key=j.key;break;
+        }else if(j.status==='error'){
+          throw new Error(j.error||'Xử lý thất bại');
+        }else if(j.status==='cancelled'){
+          stop=true;LIVE=null;return stopped();
+        }
+      }
+      let le=null;try{le=await(await API.f(`/api/jobs/${id}/live/events?after=${mine.after}`)).json()}catch{}
+      if(le&&LIVE===mine)applyLive(le);
+      await sleep(1000);
+    }
   }catch(e){stop=true;LIVE=null;throw e}
-  stop=true;await frames;
-  const res=await API.result(id),imgs={};
-  await Promise.all(res.events.filter(e=>e.task).map(async e=>{imgs[e.event_id]=await API.blob(id,`files/${key}/vlm_inputs/${e.task}/sheet.jpg`)}));
-  const videoURL=await API.blob(id,'video');S.progress=100;
+  finally{if(jobSSE)jobSSE.close()}
+
+  stop=true;
+  const res=await API.result(id);
+  let savedAlerts=[];
+  try{
+    const alRes=await(await API.f(`/api/alerts?job_id=${id}&limit=500`)).json();
+    savedAlerts=alRes.items||[];
+  }catch{}
+  const alertMap=new Map();
+  savedAlerts.forEach(a=>{if(a.event_id!=null)alertMap.set(String(a.event_id),a)});
+
+  const imgs={};
+  await Promise.all((res.events||[]).filter(e=>e.task||alertMap.has(String(e.event_id))).map(async e=>{
+    const a=alertMap.get(String(e.event_id));
+    if(a&&a.img_url)imgs[e.event_id]=await API.mediaUrl(a.img_url);
+    else if(e.task)imgs[e.event_id]=await API.blob(id,`files/${key}/vlm_inputs/${e.task}/sheet.jpg`);
+  }));
+
+  const videoURL=await API.mediaUrl(`/api/jobs/${id}/video`);
+  S.progress=100;
   await pollMap(id,()=>true,true);
-  loadData(fromResult(res,e=>imgs[e.event_id]),videoURL,{liveVideo:false,name:S.file?S.file.name:(src.split(/[\/]/).pop()||undefined)});
-  setStatus('Hoàn tất');logLine('Hoàn tất realtime: đã thay danh sách tạm bằng kết quả cuối.')}
+  const dataObj=fromResult(res,e=>imgs[e.event_id]);
+  await Promise.all((dataObj.events||[]).map(async e=>{
+    const a=alertMap.get(String(e.id));
+    if(a&&a.review)e.review=a.review;
+    if(a&&a.img_url&&!imgs[e.id])e.img=await API.mediaUrl(a.img_url);
+  }));
+
+  loadData(dataObj,videoURL,{liveVideo:false,name:S.file?S.file.name:(src.split(/[\/]/).pop()||undefined)});
+  setStatus('Hoàn tất');logLine('Hoàn tất realtime: đã thay danh sách tạm bằng kết quả cuối.');
+  if(typeof loadJobs==='function')loadJobs();
+}
 async function runDemoRealtime(cam){
   if(cam){S.videoURL=null;vid.removeAttribute('src')}
   setStatus(cam?'Camera (mô phỏng)':'Realtime (mô phỏng)');logLine('Chế độ demo: mô phỏng realtime, cảnh báo hiện dần theo thời gian video.');
@@ -547,8 +985,17 @@ async function runSite(files,siteId){
   for(;;){
     if(S.cancel){logLine('Đã dừng. Server vẫn xử lý xong lượt ghép hiện tại.');return stopped()}
     const j=await(await API.f('/api/site-jobs/'+id)).json();
-    S.progress=j.status==='done'?100:(j.stage+.5)/j.stages.length*100;renderKpis();
-    logLine(`[${j.stage+1}/${j.stages.length}] ${j.stages[j.stage]}`);
+    if(j.status==='queued'){
+      setStatus(`Hàng đợi (#${j.queue_position||1})`);
+      logLine(`Đang xếp hàng (#${j.queue_position||1}) chờ GPU…`);
+    }else if(j.status==='syncing'){
+      setStatus('Đang đồng bộ');
+      logLine('Đang đồng bộ kết quả ghép camera…');
+    }else if(j.status==='running'){
+      setStatus('Ghép camera');
+      S.progress=(j.stage+.5)/(j.stages&&j.stages.length?j.stages.length:3)*100;renderKpis();
+      if(j.stages&&j.stages[j.stage])logLine(`[${j.stage+1}/${j.stages.length}] ${j.stages[j.stage]}`);
+    }
     if(j.status==='error')throw new Error(j.error);
     if(j.status==='done')break;
     await sleep(1500)}
@@ -562,12 +1009,15 @@ async function runSite(files,siteId){
     const evs=SITEDATA.events.filter(e=>e.cams.includes(m.cam)).map(e=>({id:e.id,track:e.person_id!=null?e.person_id:'?',art:e.artifact!=null?e.artifact:'?',start:e.t0,end:e.t1,
       behavior:e.behavior,decision:'ANOMALY',conf:e.conf,reason:e.evidence||'Engine phát hiện hành vi bất thường.',review:null,img:null}));
     const data={real:true,raw:null,meta:{duration:dur,camera_id:m.file.name,width:1920,height:1080,nw:960},arts:[],tracks:[],events:evs};
-    CAMRES.push({name:m.file.name,label:site.labels[m.cam]||m.cam,cam:m.cam,data,videoURL:await blobUrl(`/api/site-jobs/${id}/video/${m.cam}`),map:MAP})}
+    const camVideoURL=await API.mediaUrl(`/api/site-jobs/${id}/video/${m.cam}`);
+    CAMRES.push({name:m.file.name,label:site.labels[m.cam]||m.cam,cam:m.cam,data,videoURL:camVideoURL,map:MAP})}
   showCam(0);setStatus(`Hoàn tất ${CAMRES.length} camera`);
   const ids=new Set(res.frames.flatMap(f=>f.people.map(p=>p.id)));
   const eng=SITEDATA.engine.map(e=>`${(site.labels[e.cam]||e.cam).split(' · ')[0]}: ${e.tracks} người theo dõi, ${e.contact_s}s chạm, ${e.alerts} bất thường`).join(' · ');
   logLine(`Hoàn tất: ${CAMRES.length} camera ghép thành một map chung, ${ids.size} người (ID chung)`+(res.events!==undefined?`, ${SITEDATA.events.length} hành vi bất thường.`:'.')
-    +(eng&&!SITEDATA.events.length?` Engine thấy → ${eng}.`:'')+(SITEDATA.err?` Lưu ý: ${SITEDATA.err}`:'')+(res.map_source==='fallback'?` Lưu ý: repo không dựng được mặt bằng nên đang vẽ lưới${res.map_note?' ('+String(res.map_note).slice(0,90)+')':''}.`:''));return true}
+    +(eng&&!SITEDATA.events.length?` Engine thấy → ${eng}.`:'')+(SITEDATA.err?` Lưu ý: ${SITEDATA.err}`:'')+(res.map_source==='fallback'?` Lưu ý: repo không dựng được mặt bằng nên đang vẽ lưới${res.map_note?' ('+String(res.map_note).slice(0,90)+')':''}.`:''));
+  if(typeof loadJobs==='function')loadJobs();
+  return true}
 function siteFrameAt(t){const F=SITEDATA.frames;let lo=0,hi=F.length-1;if(!F.length||t<F[0].t)return -1;
   while(lo<hi){const m=(lo+hi+1)>>1;F[m].t<=t?lo=m:hi=m-1}return lo}
 /* nền map ghép: sàn, lưới 5 m, vùng nhìn thấy của từng camera (dùng chung cho tab hành vi và tab heatmap) */
@@ -993,6 +1443,170 @@ $('#src').oninput=()=>{S.file=null;S.files=[];renderCalBox()};
 $('#runBtn').onclick=startAnalysis;
 $('#stopBtn').onclick=()=>{S.cancel=true;logLine('Đang dừng…')};
 
+/* ---------- Lịch sử phân tích & Xem lại ---------- */
+async function loadJobs(){
+  const box=$('#jobsList');
+  if(!box)return;
+  if(!API.ok){
+    box.innerHTML='<p class="note">Chưa kết nối backend. Kết nối backend trong Settings để xem lịch sử phân tích.</p>';
+    return;
+  }
+  try{
+    let url='/api/jobs?limit=50';
+    if(JOBS_FILTER==='done')url+='&status=done';
+    else if(JOBS_FILTER==='active')url+='&status=active';
+    else if(JOBS_FILTER==='error')url+='&status=error,cancelled';
+    const r=await(await API.f(url)).json();
+    const items=r.items||[];
+    if(!items.length){
+      box.innerHTML='<p class="note empty">Không có lượt phân tích nào.</p>';
+      return;
+    }
+    box.innerHTML=`
+      <table class="jobs-table">
+        <thead>
+          <tr>
+            <th>Tên / Nguồn</th>
+            <th>Loại</th>
+            <th>Trạng thái</th>
+            <th>Cảnh báo</th>
+            <th>Thời gian</th>
+            <th>Thao tác</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.map(j=>{
+            const isSite=j.job_type==='site';
+            const typeLabel=isSite?'Đa camera':'1 camera';
+            let stCls='done',stText='Hoàn tất';
+            if(j.status==='running'){stCls='running';stText='Đang chạy'}
+            else if(j.status==='queued'){stCls='queued';stText=`Hàng đợi #${j.queue_position||1}`}
+            else if(j.status==='syncing'){stCls='syncing';stText='Đang đồng bộ'}
+            else if(j.status==='error'){stCls='error';stText='Lỗi'}
+            else if(j.status==='cancelled'){stCls='cancelled';stText='Đã dừng'}
+            const tStr=j.created_at?new Date(j.created_at*1000).toLocaleString('vi-VN'):'—';
+            const canReplay=j.status==='done';
+            const canDelete=j.status!=='running'&&j.status!=='syncing';
+            return `
+              <tr data-job-id="${esc(j.job_id)}">
+                <td><b>${esc(j.name||j.job_id)}</b></td>
+                <td>${typeLabel}</td>
+                <td><span class="job-pill ${stCls}">${stText}</span></td>
+                <td>${j.n_alerts!=null?j.n_alerts:'—'}</td>
+                <td><small>${tStr}</small></td>
+                <td>
+                  <div class="jobs-acts">
+                    <button class="btn sm" data-job-act="replay" data-job-id="${esc(j.job_id)}" ${canReplay?'':'disabled'}>Xem lại</button>
+                    <button class="btn sm" data-job-act="delete" data-job-id="${esc(j.job_id)}" ${canDelete?'':'disabled'}>Xoá</button>
+                  </div>
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }catch(err){
+    box.innerHTML=`<p class="note err">Không tải được lịch sử: ${esc(err.message)}</p>`;
+  }
+}
+
+async function replayJob(jobId){
+  if(S.running){
+    alert('Đang có tác vụ đang chạy. Hãy đợi hoặc bấm Dừng trước khi xem lại.');
+    return;
+  }
+  logLine(`Đang tải dữ liệu lượt phân tích ${jobId}…`);
+  try{
+    const job=await API.job(jobId);
+    if(job.status!=='done'){
+      alert(`Job ${jobId} chưa hoàn tất (${job.status})`);
+      return;
+    }
+    S.jobId=jobId;
+    if(job.job_type==='site')await replaySiteJob(job);
+    else await replaySingleJob(job);
+    window.scrollTo({top:0,behavior:'smooth'});
+  }catch(err){
+    logLine(`Lỗi tải xem lại: ${err.message}`);
+    alert(`Không thể xem lại job: ${err.message}`);
+  }
+}
+
+async function replaySingleJob(job){
+  const id=job.job_id;
+  const res=await API.result(id);
+  let savedAlerts=[];
+  try{
+    const alRes=await(await API.f(`/api/alerts?job_id=${id}&limit=500`)).json();
+    savedAlerts=alRes.items||[];
+  }catch{}
+  const alertMap=new Map();
+  savedAlerts.forEach(a=>{if(a.event_id!=null)alertMap.set(String(a.event_id),a)});
+
+  const imgs={};
+  await Promise.all((res.events||[]).filter(e=>e.task||alertMap.has(String(e.event_id))).map(async e=>{
+    const a=alertMap.get(String(e.event_id));
+    if(a&&a.img_url)imgs[e.event_id]=await API.mediaUrl(a.img_url);
+    else if(e.task)imgs[e.event_id]=await API.blob(id,`files/${job.key||(res.video&&res.video.key)}/vlm_inputs/${e.task}/sheet.jpg`);
+  }));
+
+  const videoURL=await API.mediaUrl(`/api/jobs/${id}/video`);
+  await pollMap(id,()=>true,true);
+  const dataObj=fromResult(res,e=>imgs[e.event_id]);
+  await Promise.all((dataObj.events||[]).map(async e=>{
+    const a=alertMap.get(String(e.id));
+    if(a&&a.review)e.review=a.review;
+    if(a&&a.img_url&&!imgs[e.id])e.img=await API.mediaUrl(a.img_url);
+  }));
+
+  loadData(dataObj,videoURL,{liveVideo:false,name:job.name||('Xem lại: '+id)});
+  setStatus(`Hoàn tất (Xem lại: ${job.name||id})`);
+  logLine(`Đã tải kết quả xem lại lượt phân tích ${job.name||id}.`);
+}
+
+async function replaySiteJob(job){
+  const id=job.job_id;
+  const res=await(await API.f(`/api/site-jobs/${id}/result`)).json();
+  SITEDATA={
+    bounds:res.bounds,cams:res.cameras,frames:res.frames,fps:res.fps,events:res.events||[],
+    artifacts:res.artifacts||[],err:res.events_error||null,engine:res.engine||[],
+    mapSource:res.map_source||'',mapNote:res.map_note||null
+  };
+  if(res.map)SITEDATA.mapImg=await loadImg(`/api/site-jobs/${id}/map`);
+  SITEDATA.heat=computeSiteHeat();
+  SITEDATA.view=computeSiteView();
+  SITEDATA.analytics=EFAnalytics.computeMuseumAnalytics({heatmap:SITEDATA.heat,cams:SITEDATA.cams,exhibits:SITEDATA.artifacts});
+  const dur=(res.frames&&res.frames.length)?(res.frames.length/(res.fps||1)):60;
+
+  let savedAlerts=[];
+  try{
+    const alRes=await(await API.f(`/api/alerts?job_id=${id}&limit=500`)).json();
+    savedAlerts=alRes.items||[];
+  }catch{}
+
+  CAMRES=[];CAMIDX=-1;renderCamTabs();
+  const cams=res.cameras||[];
+  for(const cm of cams){
+    const camId=cm.id||cm;
+    const evs=await Promise.all((SITEDATA.events||[]).filter(e=>e.cams&&e.cams.includes(camId)).map(async e=>{
+      const a=savedAlerts.find(x=>String(x.event_id)===String(e.id));
+      return{
+        id:e.id,track:e.person_id!=null?e.person_id:'?',art:e.artifact!=null?e.artifact:'?',
+        start:e.t0,end:e.t1,behavior:e.behavior,decision:'ANOMALY',conf:e.conf,
+        reason:e.evidence||'Engine phát hiện hành vi bất thường.',review:a?a.review:null,
+        img:a&&a.img_url?await API.mediaUrl(a.img_url):null
+      };
+    }));
+    const data={real:true,raw:null,meta:{duration:dur,camera_id:cm.label||`Camera ${camId}`,width:1920,height:1080,nw:960},arts:[],tracks:[],events:evs};
+    const camVideoURL=await API.mediaUrl(`/api/site-jobs/${id}/video/${camId}`);
+    CAMRES.push({name:`Camera ${camId}`,label:cm.label||camId,cam:camId,data,videoURL:camVideoURL,map:MAP});
+  }
+  if(CAMRES.length)showCam(0);
+  setStatus(`Hoàn tất (${CAMRES.length} camera) · Xem lại: ${job.name||id}`);
+  logLine(`Đã khôi phục xem lại địa điểm ghép ${CAMRES.length} camera.`);
+}
+
 /* ---------- Điều khiển giao diện ---------- */
 function setView(v){['dash','set'].forEach(k=>$('#v-'+k).hidden=k!==v);$$('#tabs .tab').forEach(b=>b.classList.toggle('on',b.dataset.view===v));if(v==='dash'&&typeof redrawAnalyticsCharts==='function')requestAnimationFrame(redrawAnalyticsCharts)}
 $('#tabs').onclick=e=>{const b=e.target.closest('[data-view]');if(b)setView(b.dataset.view)};
@@ -1002,25 +1616,149 @@ $('#play').onclick=()=>{if(S.t>=D-.05)seek(0);setPlaying(!S.playing)};
 $('#speed').onchange=e=>{S.speed=+e.target.value;vid.playbackRate=S.speed};
 $('#layers').onclick=e=>{const b=e.target.closest('[data-l]');if(!b)return;S.layers[b.dataset.l]=!S.layers[b.dataset.l];b.classList.toggle('on')};
 $('#tl').onclick=e=>{if(e.target.dataset.seek)return seek(+e.target.dataset.seek);const r=$('#tl').getBoundingClientRect();seek((e.clientX-r.left)/r.width*D)};
+
 $('#filters').onclick=e=>{const b=e.target.closest('[data-f]');if(!b)return;S.filter=b.dataset.f;$$('#filters .tg').forEach(x=>x.classList.toggle('on',x===b));renderAlerts()};
-$('#alerts').onclick=e=>{const sk=e.target.closest('[data-seek]');if(sk){seek(+sk.dataset.seek);return}
-  const rv=e.target.closest('[data-rv]');if(rv){const ev=DATA.events.find(x=>x.id==rv.dataset.id);if(ev){ev.review=rv.dataset.rv;renderAlerts()}}};
-$('#csvBtn').onclick=()=>{
-  const rows=[['id','bat_dau_s','ket_thuc_s','khach','hien_vat','hanh_vi','quyet_dinh','tin_cay','ghi_chu_vlm']];
-  DATA.events.forEach(e=>{const a=DATA.arts.find(a=>a.id===e.art);rows.push([e.id,e.start.toFixed(2),e.end.toFixed(2),e.track,a?a.name:e.art,e.behavior,e.decision,e.conf==null?'':e.conf,e.reason])});
+const _ass=$('#alertScopeSel');
+if(_ass)_ass.onclick=e=>{const b=e.target.closest('[data-scope]');if(!b)return;S.alertScope=b.dataset.scope;$$('#alertScopeSel .tg').forEach(x=>x.classList.toggle('on',x===b));renderAlerts()};
+
+const _jf=$('#jobsFilters');
+if(_jf)_jf.onclick=e=>{const b=e.target.closest('[data-jf]');if(!b)return;JOBS_FILTER=b.dataset.jf;$$('#jobsFilters .tg').forEach(x=>x.classList.toggle('on',x===b));loadJobs()};
+const _jrb=$('#jobsRefreshBtn');
+if(_jrb)_jrb.onclick=()=>loadJobs();
+const _jl=$('#jobsList');
+if(_jl)_jl.onclick=async e=>{
+  const b=e.target.closest('[data-job-act]');if(!b)return;
+  const act=b.dataset.jobAct,jid=b.dataset.jobId;
+  if(act==='replay')replayJob(jid);
+  else if(act==='delete'){
+    if(!confirm('Bạn có chắc chắn muốn xoá lượt phân tích này không?'))return;
+    try{await API.f(`/api/jobs/${jid}`,{method:'DELETE'});loadJobs()}catch(err){alert('Lỗi xoá job: '+err.message)}
+  }
+};
+
+$('#alerts').onclick=async e=>{
+  const sk=e.target.closest('[data-seek]');if(sk){seek(+sk.dataset.seek);return}
+  const grv=e.target.closest('[data-global-rv]');
+  if(grv){
+    const aid=grv.dataset.alertId,rv=grv.dataset.globalRv;
+    try{
+      await API.f(`/api/alerts/${encodeURIComponent(aid)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({review:rv})});
+      const it=GLOBAL_ALERTS.find(x=>x.alert_id===aid);if(it)it.review=rv;
+      renderAlerts();
+    }catch(err){alert('Lỗi cập nhật đánh giá: '+err.message)}
+    return;
+  }
+  const rv=e.target.closest('[data-rv]');
+  if(rv){
+    const ev=DATA.events.find(x=>x.id==rv.dataset.id);
+    if(ev){
+      const reviewVal=rv.dataset.rv;ev.review=reviewVal;renderAlerts();
+      if(API.ok){
+        const alertId=ev.alert_id||(S.jobId?`${S.jobId}:${ev.id}`:null);
+        if(alertId){
+          try{await API.f(`/api/alerts/${encodeURIComponent(alertId)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({review:reviewVal})})}catch{}
+        }
+      }
+    }
+  }
+};
+
+$('#csvBtn').onclick=async()=>{
+  if(S.alertScope==='global'&&API.ok){
+    let p='/api/alerts/export.csv?1=1';
+    if(S.filter!=='all')p+=`&decision=${encodeURIComponent(S.filter)}`;
+    const url=await API.mediaUrl(p);
+    const a=document.createElement('a');a.href=url;a.download='exhibitflow_alerts.csv';a.click();
+    return;
+  }
+  const rows=[['id','bat_dau_s','ket_thuc_s','khach','hien_vat','hanh_vi','quyet_dinh','tin_cay','danh_gia','ghi_chu_vlm']];
+  const list=S.filter==='all'?DATA.events:DATA.events.filter(e=>e.decision===S.filter);
+  list.forEach(e=>{const a=DATA.arts.find(a=>a.id===e.art);
+    rows.push([e.id,e.start.toFixed(2),e.end.toFixed(2),e.track,a?a.name:e.art,e.behavior,e.decision,e.conf==null?'':e.conf,e.review||'',e.reason])});
   const csv='﻿'+rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='exhibitflow_alerts.csv';a.click()};
 document.addEventListener('keydown',e=>{if(e.code==='Space'&&!$('#v-dash').hidden&&!/SELECT|INPUT|BUTTON|TEXTAREA/.test(e.target.tagName)){e.preventDefault();$('#play').click()}});
 
 /* ---------- Settings: kết nối, nhập kết quả ---------- */
-function applyDirectUI(){$('#beDirect').checked=API.direct;$('#beUrl').disabled=API.direct;$('#beBtn').disabled=API.direct;$('#beOff').disabled=API.direct;
-  $('#beUrl').value=API.direct?'':(API.base||(()=>{try{return localStorage.getItem('ef_api')||''}catch{return ''}})())}
-$('#beDirect').onchange=async()=>{API.direct=$('#beDirect').checked;try{localStorage.setItem('ef_direct',API.direct?'1':'0')}catch{}
-  API.base=API.direct?'':(()=>{try{return localStorage.getItem('ef_api')||''}catch{return ''}})();applyDirectUI();await API.ping()};
+function applyDirectUI(){
+  $('#beDirect').checked=API.direct;
+  $('#beUrl').disabled=API.direct;
+  $('#beBtn').disabled=API.direct;
+  $('#beOff').disabled=API.direct;
+  $('#beUrl').value=API.direct?'':(API.base||(()=>{try{return localStorage.getItem('ef_api')||''}catch{return ''}})());
+  const beKeyInput=$('#beKey');
+  if(beKeyInput)beKeyInput.value=API.key||'';
+  const beRemInput=$('#beRememberKey');
+  if(beRemInput)beRemInput.checked=API.rememberKey;
+}
+$('#beDirect').onchange=async()=>{
+  API.direct=$('#beDirect').checked;
+  try{localStorage.setItem('ef_direct',API.direct?'1':'0')}catch{}
+  API.base=API.direct?'':(()=>{try{return localStorage.getItem('ef_api')||''}catch{return ''}})();
+  applyDirectUI();
+  await API.ping();
+};
 applyDirectUI();
-$('#beBtn').onclick=async()=>{API.base=$('#beUrl').value.trim().replace(/\/+$/,'');try{localStorage.setItem('ef_api',API.base)}catch{}await API.ping()};
-$('#beOff').onclick=async()=>{API.base='';$('#beUrl').value='';try{localStorage.removeItem('ef_api')}catch{}await API.ping()};
+$('#beBtn').onclick=async()=>{
+  API.base=$('#beUrl').value.trim().replace(/\/+$/,'');
+  try{localStorage.setItem('ef_api',API.base)}catch{}
+  const keyInput=$('#beKey');
+  const remInput=$('#beRememberKey');
+  API.key=(keyInput?keyInput.value:'').trim();
+  API.rememberKey=remInput?remInput.checked:false;
+  try{
+    localStorage.setItem('ef_be_remember_key',API.rememberKey?'1':'0');
+    if(API.rememberKey){
+      localStorage.setItem('ef_be_key',API.key);
+      sessionStorage.removeItem('ef_be_key');
+    }else{
+      sessionStorage.setItem('ef_be_key',API.key);
+      localStorage.removeItem('ef_be_key');
+    }
+  }catch{}
+  API.streamTicket='';
+  API.streamTicketExpiresAt=0;
+  sseErrorCount=0;
+  sseFallbackPolling=false;
+  disconnectGlobalSSE();
+  await API.ping();
+};
+$('#beOff').onclick=async()=>{
+  API.base='';
+  API.key='';
+  API.streamTicket='';
+  API.streamTicketExpiresAt=0;
+  sseErrorCount=0;
+  sseFallbackPolling=false;
+  $('#beUrl').value='';
+  if($('#beKey'))$('#beKey').value='';
+  try{
+    localStorage.removeItem('ef_api');
+    localStorage.removeItem('ef_be_key');
+    sessionStorage.removeItem('ef_be_key');
+  }catch{}
+  disconnectGlobalSSE();
+  await API.ping();
+};
+const _cbb=$('#connBannerBtn');
+if(_cbb)_cbb.onclick=()=>setView('set');
 $('#conf').oninput=e=>$('#confV').textContent=(+e.target.value).toFixed(2);
+
+const _gsb=$('#gpuSaveBtn');
+if(_gsb)_gsb.onclick=async()=>{
+  if(!API.ok){alert('Vui lòng kết nối Backend trước khi cấu hình GPU Worker.');return}
+  _gsb.disabled=true;_gsb.textContent='Đang lưu…';
+  const url=$('#gpuUrl').value.trim(),token=$('#gpuToken').value.trim(),payload={url};
+  if(token)payload.token=token;
+  try{
+    const res=await(await API.f('/api/config/gpu',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();
+    $('#gpuToken').value='';
+    if(res.has_token)$('#gpuToken').placeholder='đã lưu (nhập mới để đổi)';
+    updateChipAndGpuUI(res.gpu);
+    logLine(res.gpu&&res.gpu.online?'Kết nối GPU Worker thành công.':'Đã lưu cấu hình nhưng GPU Worker đang ngoại tuyến.');
+  }catch(err){alert('Lỗi lưu cấu hình GPU: '+err.message)}
+  finally{_gsb.disabled=false;_gsb.textContent='Lưu & Kiểm tra'}
+};
 
 /* ---------- Camera (Realtime) ---------- */
 let CAMS=(()=>{try{const v=JSON.parse(localStorage.getItem('ef_cams')||'null');if(Array.isArray(v)&&v.length)return v}catch{}return[{name:'CAM 1 · Sảnh chính',url:''},{name:'CAM 2 · Phòng gốm',url:''}]})();
@@ -1047,6 +1785,12 @@ resetData();renderSystem();setStatus('Chưa chạy');renderCams();setMode(S.mode
 logLine('Sẵn sàng.'+(CFG.demo?' Chế độ demo: chưa kết nối backend thì kết quả là dữ liệu mẫu.':''));
 setInterval(()=>{$('#clock').textContent=new Date().toLocaleString('vi-VN')},1000);$('#clock').textContent=new Date().toLocaleString('vi-VN');
 setInterval(pollSystem,3000);
+setInterval(async()=>{
+  await API.ping();
+  if(sseFallbackPolling&&API.ok&&API.authenticated&&typeof loadJobs==='function'){
+    loadJobs();
+  }
+},5000);
 API.ping();requestAnimationFrame(tick);
 
 /* ---------- Ngăn kéo menu ---------- */
