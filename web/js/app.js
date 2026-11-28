@@ -75,10 +75,11 @@ const proj=(fx,fy)=>{const s=.45+.55*fy;return{x:.5+(fx-.5)*s,y:.24+.7*fy,s}};
 function rr(x,X,Y,W,H,R){x.beginPath();x.roundRect(X,Y,W,H,R)}
 function activeEvents(t){return EFPlay.activeEventsAt(DATA.events,t)}
 const eventStart=e=>e.onset!=null?e.onset:e.start;          // lúc báo động thật
-const camName=()=>CAMRES.length>1&&CAMIDX>=0?`CAM ${CAMIDX+1}`:'';          // số hiện vật là riêng của từng camera
+const camName=()=>CAMRES.length>1&&CAMIDX>=0?`CAM ${CAMIDX+1}`:'';
+const artCam=()=>DATA.raw&&DATA.raw.artifact_global?'':camName();          // số hiện vật riêng từng camera thì ghi kèm camera, số chung thì thôi
 const artName=id=>{const a=DATA.arts.find(a=>a.id===id);return a?a.name:''};
-const artFull=id=>EFPlay.artText(id,artName(id),camName());
-const bannerText=e=>`Visitor #${e.track}: ${EFPlay.actionText(evLabel(e),e.art,camName())}${artName(e.art)?' — '+artName(e.art):''}`;
+const artFull=id=>EFPlay.artText(id,artName(id),artCam());
+const bannerText=e=>`Visitor #${e.track}: ${EFPlay.actionText(evLabel(e),e.art,artCam())}${artName(e.art)?' — '+artName(e.art):''}`;
 
 function drawReal(t){
   const {x,w,h}=fit($('#scene'));x.clearRect(0,0,w,h);
@@ -252,8 +253,8 @@ function renderAlerts(){
 function renderTimeline(){const tl=$('#tl');tl.querySelectorAll('.seg').forEach(n=>n.remove());
   const seg=(e,from,to,col,label)=>{const d=document.createElement('div');d.className='seg';d.style.cssText=`left:${from/D*100}%;width:${(to-from)/D*100}%;background:${col}`;d.title=`#${e.track} ${label}`;d.dataset.seek=from;tl.append(d)};
   listEvents().forEach(e=>{
-    if(e.onset!=null){const wait={...e,decision:'CANDIDATE',behavior:'uncertain'};seg(e,e.start,e.onset,evColor(wait),EFPlay.actionText(evLabel(wait),e.art,camName()))}
-    seg(e,eventStart(e),e.end,evColor(e),EFPlay.actionText(evLabel(e),e.art,camName()))});
+    if(e.onset!=null){const wait={...e,decision:'CANDIDATE',behavior:'uncertain'};seg(e,e.start,e.onset,evColor(wait),EFPlay.actionText(evLabel(wait),e.art,artCam()))}
+    seg(e,eventStart(e),e.end,evColor(e),EFPlay.actionText(evLabel(e),e.art,artCam()))});
   const o=DER.occ;if(DATA.real||!o.length||Math.max(...o)===0){$('#occ').innerHTML='';return}
   const m=Math.max(...o),pts=o.map((v,i)=>`${i/(o.length-1)*100},${100-v/m*70-4}`).join(' ');
   $('#occ').setAttribute('viewBox','0 0 100 100');$('#occ').innerHTML=`<polyline points="0,100 ${pts} 100,100" fill="rgba(25,35,43,.07)" stroke="rgba(25,35,43,.4)" stroke-width=".8" vector-effect="non-scaling-stroke"/>`}
@@ -385,7 +386,7 @@ function paint(){const t=S.t,L=$('#live');
   if(!S.loaded)L.hidden=true;else{L.hidden=false;
     const aev=activeEvents(t).filter(e=>e.decision!=='NORMAL'),an=aev.find(e=>e.decision==='ANOMALY'),ca=aev.find(e=>e.decision==='CANDIDATE');
     if(an){L.className='live red';L.textContent=bannerText(an)}
-    else if(ca){L.className='live yel';L.textContent=EFPlay.actionText(`Visitor #${ca.track} cần xác nhận`,ca.art,camName())}
+    else if(ca){L.className='live yel';L.textContent=EFPlay.actionText(`Visitor #${ca.track} cần xác nhận`,ca.art,artCam())}
     else{L.className='live grn';L.textContent='● Bình thường'}}
   $('#mapCount').textContent=hasMap?MAP.shown+' '+(MAP.unit||'người'):DATA.real?'0 người':(S.loaded?activeAt(t).length:0)+' người';
   drawMapPanels(t);

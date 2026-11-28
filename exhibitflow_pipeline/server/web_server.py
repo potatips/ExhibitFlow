@@ -68,6 +68,7 @@ import site_fusion  # noqa: E402
 import site_parallel  # noqa: E402
 import site_runner  # noqa: E402
 import still_gate  # noqa: E402
+import art_match  # noqa: E402
 
 ALLOWED = {'.mp4', '.avi', '.mov', '.mkv', '.webm'}
 
@@ -1007,6 +1008,20 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                                   f'{len(info.get("propagated") or [])} sự kiện được lan sang camera khác, {n_dem} bị hạ xuống "cần xem lại"')
         except Exception as e:                          # noqa: BLE001 - đối chiếu lỗi: giữ kết quả riêng từng camera
             job['log'].append(f'[events] đối chiếu chéo lỗi: {type(e).__name__}: {e}')
+        # số hiện vật chung cho các camera (xem art_match.py): đổi sau khi đối chiếu chéo xong
+        try:
+            results, specs = {}, {}
+            for cam, tl in tls.items():
+                rd = (job.get('result_dirs') or {}).get(cam)
+                if rd and (Path(rd) / 'result.json').is_file():
+                    results[cam] = json.loads((Path(rd) / 'result.json').read_text(encoding='utf-8'))
+                    specs[cam] = site_events.fit_to_video(site['cameras'][cam], int(tl['width']), int(tl['height']))
+            job['art_map'] = art_match.match(results, specs, site.get('room_bounds'))
+            for cam, ids in job['art_map'].items():
+                tls[cam] = art_match.renumber_timeline(tls[cam], ids)
+        except Exception as e:                          # noqa: BLE001 - không ghép được: giữ số riêng của từng camera
+            job['art_map'] = {}
+            job['log'].append(f'[events] không ghép được số hiện vật giữa các camera: {type(e).__name__}: {e}')
         for cam, tl in tls.items():
             try:
                 vi, spec, H = cam_ctx(cam, job['videos'][cam])
@@ -1198,6 +1213,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
             raise HTTPException(404, 'Chưa có kết quả engine cho camera này')
         job = get_site_job(jid)
         res = copy.deepcopy((job.get('fused') or {}).get(cam)) or json.loads((Path(rd) / 'result.json').read_text(encoding='utf-8'))
+        res = art_match.renumber_result(res, (job.get('art_map') or {}).get(cam))   # số hiện vật chung
         m = (job.get('id_map') or {}).get(cam) or {}
         if m:                                              # ID cục bộ của tracker camera -> ID chung của map ghép (khớp nhãn trên live.mp4)
             g = lambda t: m.get(int(t), t) if t is not None else t      # noqa: E731
