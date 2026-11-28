@@ -50,7 +50,7 @@ MODELS = dict(
                   exp=None, depth=0.33, width=0.5, num_classes=1, test_size=(608, 1088), ckpt='best_ckpt.pth',
                   low_light_boost=dict(enabled=True, luma_thr=75.0, clip_limit=2.0, tile_grid=8)),
     tracker=dict(backend='bytetrack_dma_ltc', device=GPU_A, with_reid=True,
-                 track_thresh=0.5, track_buffer=75, match_thresh=0.9,
+                 track_thresh=0.5, track_buffer=30, match_thresh=0.9,
                  reid_model='osnet_x0_25', reid_ckpt='osnet_x0_25.pth', reid_weight=0.5, reid_thresh=0.6,
                  ltc_ckpt='ltc_motion_mot17.pth', ltc_min_history=10,
                  dma_ckpt='dma_gbm_mot17.gbm', min_box_area=100, max_aspect=1.6,
