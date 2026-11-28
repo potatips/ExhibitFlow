@@ -44,14 +44,15 @@ def test_evaluate_readiness_strict_gates() -> None:
     assert ok is False
     assert any("error" in r for r in reasons)
 
-    # VLM error -> NOT ready
-    ok, reasons = gpu_launch.evaluate_readiness(
-        {"ok": True, "models": {"state": "ready"}, "vlm": {"state": "error"}},
-        demo=False,
-        wait_models_flag=True,
-    )
-    assert ok is False
-    assert any("vlm.state" in r for r in reasons)
+    # VLM error or starting -> NOT ready
+    for vlm_state in ("error", "starting"):
+        ok, reasons = gpu_launch.evaluate_readiness(
+            {"ok": True, "models": {"state": "ready"}, "vlm": {"state": vlm_state}},
+            demo=False,
+            wait_models_flag=True,
+        )
+        assert ok is False
+        assert any("vlm.state" in r for r in reasons)
 
     # Demo mode -> ready when ok=True
     ok, reasons = gpu_launch.evaluate_readiness({"ok": True}, demo=True, wait_models_flag=True)

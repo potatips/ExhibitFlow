@@ -444,8 +444,8 @@ function updateChipAndBanner(health){
 
   const gpu=health.gpu||{};
   const isGpuOnline=!!gpu.online;
-  const isGpuReady=(gpu.ready!==undefined)?!!gpu.ready:(isGpuOnline&&(gpu.demo||(gpu.models&&gpu.models.state==='ready')));
   const modelsState=(gpu.models&&gpu.models.state)||'';
+  const isGpuReady=(gpu.ready!==undefined)?!!gpu.ready:(isGpuOnline&&(gpu.demo||(modelsState==='ready')||(!!gpu.busy&&modelsState!=='error')));
 
   c.classList.remove('ok','warn','bad');
 
@@ -458,18 +458,38 @@ function updateChipAndBanner(health){
       banner.className='conn-banner warn';
       if(bText)bText.textContent='GPU Worker đang ngoại tuyến hoặc đã đổi URL. Lịch sử phân tích & cảnh báo vẫn hoạt động bình thường. Để phân tích video mới, kiểm tra GPU worker hoặc cập nhật URL trong Cài đặt.';
     }
+  }else if(gpu.busy&&modelsState!=='error'){
+    c.classList.add('ok');
+    c.querySelector('span').textContent='Backend + GPU sẵn sàng (GPU đang bận)';
+    c.title=`GPU Worker đang xử lý tác vụ tại ${gpu.url||'remote'}`;
+    if(banner)banner.hidden=true;
   }else if(!isGpuReady){
     c.classList.add('warn');
+    const mMsg=(gpu.models&&gpu.models.msg)||'';
     if(modelsState==='loading'){
       c.querySelector('span').textContent='Backend sẵn sàng · GPU đang nạp model';
+      c.title=`GPU Worker: ${mMsg||'đang tải & warm-up mô hình'}`;
+      if(banner){
+        banner.hidden=false;
+        banner.className='conn-banner warn';
+        if(bText)bText.textContent=`GPU Worker đang tải mô hình (${mMsg||'vui lòng chờ…'}).`;
+      }
+    }else if(modelsState==='idle'){
+      c.querySelector('span').textContent='Backend sẵn sàng · GPU chờ nạp model';
+      c.title='GPU Worker đã trực tuyến nhưng mô hình chưa được nạp';
+      if(banner){
+        banner.hidden=false;
+        banner.className='conn-banner warn';
+        if(bText)bText.textContent='GPU Worker chưa nạp mô hình (đang ở trạng thái chờ).';
+      }
     }else{
       c.querySelector('span').textContent='Backend sẵn sàng · GPU lỗi model';
-    }
-    c.title=`GPU Worker: ${(gpu.models&&gpu.models.msg)||'đang tải mô hình'}`;
-    if(banner){
-      banner.hidden=false;
-      banner.className='conn-banner warn';
-      if(bText)bText.textContent=`GPU Worker đang tải mô hình (${(gpu.models&&gpu.models.msg)||'vui lòng chờ…'}).`;
+      c.title=`GPU Worker: ${mMsg||'lỗi nạp mô hình'}`;
+      if(banner){
+        banner.hidden=false;
+        banner.className='conn-banner warn';
+        if(bText)bText.textContent=`GPU Worker lỗi nạp mô hình (${mMsg||'kiểm tra log GPU_server'}).`;
+      }
     }
   }else{
     c.classList.add('ok');

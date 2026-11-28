@@ -131,6 +131,8 @@ def test_compute_gpu_ready_contract() -> None:
     assert compute_gpu_ready({"online": True, "demo": False, "models": {"state": "ready"}, "vlm": {"state": "error"}}) is False
     assert compute_gpu_ready({"online": True, "demo": False, "models": {"state": "ready"}, "vlm": {"state": "ready"}}) is True
     assert compute_gpu_ready({"online": True, "demo": False, "models": {"state": "ready"}, "vlm": {"state": "disabled"}}) is True
+    assert compute_gpu_ready({"online": True, "demo": False, "busy": True, "models": {"state": "idle"}, "vlm": {"state": "ready"}}) is True
+    assert compute_gpu_ready({"online": True, "demo": False, "busy": True, "models": {"state": "error"}, "vlm": {"state": "ready"}}) is False
 
 
 def test_health_privacy_and_gpu_token_isolation(tmp_path: Path) -> None:

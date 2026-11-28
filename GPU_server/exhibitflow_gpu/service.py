@@ -94,6 +94,7 @@ class Engine:
                     self.seg.get()
                     self.M.load_times['segmenter'] = self.seg.load_times
                 self._wait_vlm()
+                self._warmup_floorplan()
             self.stage = ''
             self.key, self.components, self.ready = key, components, True
             print(f'\n[nạp] XONG — sẵn sàng ({"+".join(sorted(components)) or "chỉ tracking"})'
@@ -151,7 +152,30 @@ class Engine:
             raise RuntimeError('VLM nạp lỗi (xem log ở trên).')
         if self.vlm.model is not None and getattr(self.vlm.model, 'server_url', None):
             self.models['vlm']['server_url'] = self.vlm.model.server_url
+        if not self.local and self.vlm.model is not None and hasattr(self.vlm.model, 'warmup'):
+            self.set_stage('Warm-up VLM (llama-server)')
+            print('[warmup] VLM (Qwen3-VL)...', flush=True)
+            self.vlm.model.warmup()
         self.M.load_times['vlm'] = dict(load_s=self.vlm.load_s, warmup_s=None)
+
+    def _warmup_floorplan(self):
+        """Kiểm tra trọng số map 2D (Depth-Anything V2, SegFormer, YOLO11n-pose) trước khi báo READY."""
+        try:
+            from .floorplan import single_cam
+            tool = single_cam.find_tool()
+            if tool is None:
+                return
+            self.set_stage('Kiểm tra & warm-up trọng số Floorplan 2D')
+            single_cam.ensure_models(tool)
+            pose_pt = tool / 'models' / 'yolo11n-pose.pt'
+            if pose_pt.is_file():
+                try:
+                    from ultralytics import YOLO
+                    YOLO(str(pose_pt))
+                except Exception as exc:  # noqa: BLE001
+                    print(f'    [warmup] bỏ qua yolo11n-pose ({type(exc).__name__}: {exc})', flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f'    [warmup] bỏ qua floorplan ({type(exc).__name__}: {exc})', flush=True)
 
     def set_stage(self, msg):
         self.stage = msg

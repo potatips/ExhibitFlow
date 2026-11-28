@@ -26,12 +26,20 @@ class GPUClientError(RuntimeError):
 
 
 def compute_gpu_ready(health: dict[str, Any]) -> bool:
-    """Compute honest readiness: online AND (demo OR (models.state == 'ready' and vlm.state != 'error'))."""
+    """Compute honest readiness: online AND (demo OR (models.state == 'ready' and vlm.state != 'error') OR active GPU job)."""
     online = bool(health.get("online"))
     demo = bool(health.get("demo"))
+    busy = bool(health.get("busy"))
     models_state = str((health.get("models") or {}).get("state") or "").lower()
     vlm_state = str((health.get("vlm") or {}).get("state") or "").lower()
-    return bool(online and (demo or (models_state == "ready" and vlm_state != "error")))
+    return bool(
+        online
+        and (
+            demo
+            or (models_state == "ready" and vlm_state != "error")
+            or (busy and models_state != "error" and vlm_state != "error")
+        )
+    )
 
 
 def _extract_error(resp: httpx.Response) -> str:

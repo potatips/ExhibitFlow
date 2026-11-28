@@ -148,6 +148,8 @@ class RealRuntime:
         self._site_jobs: dict[str, dict[str, Any]] = {}
         self._multis: dict[str, Any] = {}
         self._app_site_ids: dict[str, Any] = {"labeler": None, "map": {}, "votes": {}}
+        self._preload_enabled = bool(preload)
+        self._parallel_vram_yielded = False
 
         if mode:
             self.state.save_settings({"pipeline_mode": mode})
@@ -244,7 +246,10 @@ class RealRuntime:
             "shared": bool(vlm_st.get("shared", True)),
         }
         site_running = next((jid for jid, sj in self._site_jobs.items() if sj["status"] == "running"), None)
-        busy = self.runner.running() or (site_running is not None)
+        multi_running = any(mr.snapshot().get("status") == "running" for mr in self._multis.values())
+        busy = self.runner.running() or (site_running is not None) or multi_running
+        if self._parallel_vram_yielded and busy and ms.get("state") == "idle" and vlm_info["state"] != "error":
+            ms = {"state": "ready", "msg": "Đang chạy camera song song"}
         active_id = site_running or (self._cur["id"] if self.runner.running() else None)
         return {
             "models": ms,
@@ -771,6 +776,9 @@ class RealRuntime:
                         det_conf=self.det_conf,
                     )
                 vlm_url: Optional[str] = None
+                while self.runner.loading():
+                    time.sleep(0.2)
+                self._parallel_vram_yielded = True
                 if self.runner.engine is not None:
                     vlm_url = (self.runner.engine.models or {}).get("vlm", {}).get("server_url")
                     self.runner.engine.close()
@@ -802,7 +810,10 @@ class RealRuntime:
                 )
                 job.pop("par_progress", None)
                 tls.clear()
-                self.runner.preload()
+            finally:
+                self._parallel_vram_yielded = False
+                if self._preload_enabled and self.runner.engine is None:
+                    self.runner.preload()
 
         if not tls:
             gallery: dict[int, Any] = {}
@@ -1072,6 +1083,7 @@ class RealRuntime:
         if par:
             for i, c in enumerate(cams):
                 c["root"] = run_root / f"cam{i + 1}"
+            self._parallel_vram_yielded = True
             if self.runner.engine is not None:
                 vlm_url = (self.runner.engine.models or {}).get("vlm", {}).get("server_url")
                 self.runner.engine.close()
@@ -1163,7 +1175,14 @@ class RealRuntime:
 
     def get_multi_job(self, mid: str) -> Optional[dict[str, Any]]:
         mr = self._multis.get(mid)
-        return mr.snapshot() if mr is not None else None
+        if mr is None:
+            return None
+        snap = mr.snapshot()
+        if snap.get("status") != "running" and self._parallel_vram_yielded:
+            self._parallel_vram_yielded = False
+            if self._preload_enabled and self.runner.engine is None:
+                self.runner.preload()
+        return snap
 
     def get_multi_results(self, mid: str) -> Optional[list[dict[str, Any]]]:
         mr = self._multis.get(mid)

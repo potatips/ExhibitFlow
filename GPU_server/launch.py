@@ -197,18 +197,29 @@ def fetch_local_health(port: int, token: str, timeout: float = 2.0) -> dict[str,
 def wait_models(port: int, token: str, timeout: int = 3600) -> dict[str, Any]:
     t0 = time.time()
     last = 0.0
-    print("Waiting for GPU models to finish loading...", flush=True)
+    last_msg = ""
+    print("Waiting for GPU models & warmup to finish...", flush=True)
     while time.time() - t0 < timeout:
         try:
             h = fetch_local_health(port, token, timeout=3.0)
             m = h.get("models") or {"state": "loading", "msg": ""}
+            v = h.get("vlm") or {}
         except Exception:  # noqa: BLE001
             m = {"state": "loading", "msg": ""}
-        if m.get("state") in ("ready", "error"):
+            v = {}
+        m_state = m.get("state")
+        v_state = v.get("state")
+        if m_state == "error":
             return m
-        if time.time() - last > 30:
-            last = time.time()
-            print(f"  ... loading models ({int(last - t0)}s): {m.get('msg') or ''}", flush=True)
+        if m_state == "ready" and v_state != "starting":
+            print(f"  [warmup] All GPU models warmed up and ready ({int(time.time() - t0)}s).", flush=True)
+            return m
+        msg = m.get("msg") or ""
+        now = time.time()
+        if (msg and msg != last_msg) or (now - last > 10):
+            last = now
+            last_msg = msg
+            print(f"  ... loading/warming up ({int(now - t0)}s): {msg or m_state or 'initializing'}", flush=True)
         time.sleep(2.0)
     return {"state": "timeout", "msg": "Timed out waiting for models"}
 
@@ -320,8 +331,8 @@ def evaluate_readiness(
         m_state = models.get("state")
         if m_state != "ready":
             reasons.append(f"models.state is {m_state!r} ({models.get('msg') or 'not ready'})")
-        if vlm.get("state") == "error":
-            reasons.append("vlm.state is 'error'")
+        if vlm.get("state") in ("error", "starting"):
+            reasons.append(f"vlm.state is {vlm.get('state')!r}")
 
     if tunnel_requested:
         if not public_url:
