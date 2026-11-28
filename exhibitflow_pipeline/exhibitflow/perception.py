@@ -1505,15 +1505,13 @@ class PersonTrackFilter:
         min_frac = float(cfg.get('pose_min_valid_frac', 0.5))
         win = max(1, int(cfg.get('pose_window', 10)))
         conf_thr = float(CFG['pose_conf_thr'] if self.pose_conf_thr is None else self.pose_conf_thr)
-        posed_set = None if posed_ids is None else {int(t) for t in posed_ids}
         kept = []
         for rec in tracks:
             tid = int(rec['id'])
-            has_pose_eval = (
-                (tid in posed_set) or (rec.get('kp') is not None and rec.get('kc') is not None)
-                if posed_set is not None
-                else (rec.get('kp') is not None and rec.get('kc') is not None)
-            )
+            # Chỉ đánh giá khi pose THỰC SỰ trả keypoint. Pose được thử nhưng không ra kết quả (người nhỏ / bị che / quay lưng / tối,
+            # hoặc không khớp box) KHÔNG phải bằng chứng đây là box giả: trước đây bị tính là "0 keypoint hợp lệ" nên track gần hiện vật
+            # (nơi pose được chạy) bị xoá liên tục -> detect đứt quãng ở chế độ tracking_seg, còn chế độ tracking không bị.
+            has_pose_eval = rec.get('kp') is not None and rec.get('kc') is not None
             if has_pose_eval:
                 n_valid = count_valid_keypoints(rec, conf_thr=conf_thr)
                 hist = self._pose_hist.get(tid)

@@ -153,9 +153,13 @@
     </div>
     <div class="card">
       <h3>Cấu hình phân tích</h3>
-      <div class="opt"><label>Ngưỡng tin cậy VLM <span id="confV">0.60</span></label>
-        <input type="range" id="conf" min="0.3" max="0.95" step="0.05" value="0.6"></div>
+      <div class="opt"><label>Ngưỡng tin cậy VLM <span><input type="number" class="numin" id="confN" min="0" max="1" step="0.01" value="0.60" inputmode="decimal"></span></label>
+        <input type="range" id="conf" min="0" max="1" step="0.01" value="0.6"></div>
       <p class="note">Chỉ cảnh báo khi VLM trả hành vi bất thường với độ tin cậy từ ngưỡng này trở lên.</p>
+      <div class="opt"><label>Ngưỡng phát hiện người (detector) <span><input type="number" class="numin" id="detN" min="0.01" max="0.99" step="0.01" value="0.01" inputmode="decimal"> <em id="detV">(mặc định)</em></span></label>
+        <input type="range" id="detConf" min="0.01" max="0.99" step="0.01" value="0.01"></div>
+      <div class="row"><button class="btn" id="detReset">Về mặc định</button></div>
+      <p class="note">Ngưỡng thấp: bắt được nhiều người hơn nhưng dễ có khung thừa. Ngưỡng cao: ít khung thừa nhưng có thể sót người. Áp dụng cho server ngay, hiệu lực từ lượt phân tích kế tiếp (cần kết nối backend).</p>
     </div>
   </div>
 </section>

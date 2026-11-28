@@ -175,7 +175,7 @@ const API={direct:(()=>{try{return localStorage.getItem('ef_direct')==='1'}catch
   async f(p,o={}){const r=await fetch(this.base+p,{...o,headers:{...NGROK_H,...(o.headers||{})}});if(!r.ok)throw EFErr.httpError(r.status,await errText(r));return r},
   async ping(){this.ok=false;
     /* Chế độ trực tiếp / chưa nhập URL: thử cùng origin (trang được chính GPU server phục vụ) */
-    if(this.direct||this.base||location.protocol!=='file:'){try{const r=await fetch(this.base+'/api/health',{headers:NGROK_H,signal:AbortSignal.timeout(6000)});this.ok=r.ok}catch{this.ok=false}}
+    if(this.direct||this.base||location.protocol!=='file:'){try{const r=await fetch(this.base+'/api/health',{headers:NGROK_H,signal:AbortSignal.timeout(6000)});this.ok=r.ok;if(r.ok){try{showDetConf(await r.json())}catch{}}}catch{this.ok=false}}
     const c=$('#beChip');c.classList.toggle('ok',this.ok);c.classList.toggle('bad',!this.ok);
     c.querySelector('span').textContent=this.ok?'Đã kết nối':'Mất kết nối';
     $('#beMsg').textContent=this.ok?'đã kết nối ✓':(this.direct?'GPU server cùng origin: không phản hồi':this.base?'không kết nối được':'chưa kết nối');
@@ -1057,6 +1057,15 @@ $('#csvBtn').onclick=()=>{
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='exhibitflow_alerts.csv';a.click()};
 document.addEventListener('keydown',e=>{if(e.code==='Space'&&!$('#v-dash').hidden&&!/SELECT|INPUT|BUTTON|TEXTAREA/.test(e.target.tagName)){e.preventDefault();$('#play').click()}});
 
+/* ---------- Settings: ngưỡng phát hiện người (gửi lên server) ---------- */
+function showDetConf(o){const el=$('#detConf');if(!el||o==null)return;const eff=typeof o==='object'?o.det_conf_effective:o,def=typeof o==='object'?o.det_conf_default:null;
+  if(eff==null)return;el.value=eff;$('#detN').value=(+eff).toFixed(2);$('#detV').textContent=(def!=null&&Math.abs(eff-def)<1e-9)?'(mặc định)':''}
+async function postDetConf(v){const r=await(await API.f('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({det_conf:v})})).json();showDetConf(r);return r}
+let detTimer=0;
+bindNum($('#detConf'),$('#detN'),v=>{$('#detV').textContent='';clearTimeout(detTimer);
+  detTimer=setTimeout(async()=>{try{await postDetConf(v);logLine('Ngưỡng phát hiện người = '+v.toFixed(2))}catch(err){logLine('Không đặt được ngưỡng: '+err.message)}},400)},2);
+$('#detReset').onclick=async()=>{try{await postDetConf(null);logLine('Ngưỡng phát hiện người về mặc định của engine.')}catch(err){logLine('Không đặt được ngưỡng: '+err.message)}};
+
 /* ---------- Settings: kết nối, nhập kết quả ---------- */
 function applyDirectUI(){$('#beDirect').checked=API.direct;$('#beUrl').disabled=API.direct;$('#beBtn').disabled=API.direct;$('#beOff').disabled=API.direct;
   $('#beUrl').value=API.direct?'':(API.base||(()=>{try{return localStorage.getItem('ef_api')||''}catch{return ''}})())}
@@ -1065,7 +1074,13 @@ $('#beDirect').onchange=async()=>{API.direct=$('#beDirect').checked;try{localSto
 applyDirectUI();
 $('#beBtn').onclick=async()=>{API.base=$('#beUrl').value.trim().replace(/\/+$/,'');try{localStorage.setItem('ef_api',API.base)}catch{}await API.ping()};
 $('#beOff').onclick=async()=>{API.base='';$('#beUrl').value='';try{localStorage.removeItem('ef_api')}catch{}await API.ping()};
-$('#conf').oninput=e=>$('#confV').textContent=(+e.target.value).toFixed(2);
+/* ô nhập số <-> thanh kéo: gõ số (kẹp vào khoảng cho phép) hoặc kéo, hai bên luôn khớp nhau */
+function bindNum(sl,num,onSet,dec){const clamp=v=>Math.min(+sl.max,Math.max(+sl.min,v));
+  sl.addEventListener('input',()=>{num.value=(+sl.value).toFixed(dec);onSet(+sl.value)});
+  const commit=()=>{const v=parseFloat(String(num.value).replace(',','.'));if(!isFinite(v)){num.value=(+sl.value).toFixed(dec);return}
+    const c=clamp(Math.round(v*100)/100);sl.value=c;num.value=c.toFixed(dec);onSet(c)};
+  num.addEventListener('change',commit);num.addEventListener('keydown',e=>{if(e.key==='Enter'){commit();num.blur()}})}
+bindNum($('#conf'),$('#confN'),()=>{},2);
 
 /* ---------- Camera (Realtime) ---------- */
 let CAMS=(()=>{try{const v=JSON.parse(localStorage.getItem('ef_cams')||'null');if(Array.isArray(v)&&v.length)return v}catch{}return[{name:'CAM 1 · Sảnh chính',url:''},{name:'CAM 2 · Phòng gốm',url:''}]})();

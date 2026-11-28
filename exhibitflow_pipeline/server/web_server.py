@@ -101,6 +101,14 @@ def pipe_of(opts):
 MAKE_MAP = os.environ.get('EXHIBITFLOW_MAKE_MAP', '1') != '0'   # tạo map 2D từ video (multicam-2d-floorplan-tracker), mất ~15-25 s/video
 
 
+def det_conf_state(web_cfg):
+    """Ngưỡng detector: đang đặt (None = chưa đặt), mặc định của engine, và giá trị thực sự đang dùng."""
+    from exhibitflow import settings as efs
+    default = float(efs.MODELS.get('detector', {}).get('conf', 0.01))
+    cur = web_cfg.get('det_conf')
+    return dict(det_conf=cur, det_conf_default=default, det_conf_effective=default if cur is None else cur)
+
+
 def parse_det_conf(v):
     """Ngưỡng phát hiện người từ web: số trong [0.001, 0.99], không hợp lệ thì None (giữ mặc định)."""
     try:
@@ -359,7 +367,22 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
     def health():
         with state.lock:
             ms = state.models_state
-        return {'ok': True, 'version': 'ef-web-1', 'demo': demo, 'models': ms, 'jobs': len(jobs), 'det_conf': web_cfg['det_conf']}
+        return {'ok': True, 'version': 'ef-web-1', 'demo': demo, 'models': ms, 'jobs': len(jobs), **det_conf_state(web_cfg)}
+
+    @app.post('/api/config')
+    async def set_config(request: Request):
+        """Đặt ngưỡng phát hiện người (detector conf) lúc đang chạy: {"det_conf": 0.3} hoặc null = mặc định của engine.
+        Áp ngay cho model đang nạp và cho mọi lượt phân tích sau (kể cả tiến trình camera song song)."""
+        try:
+            body = await request.json()
+        except Exception:                                  # noqa: BLE001
+            raise HTTPException(400, 'Body phải là JSON')
+        v = body.get('det_conf') if isinstance(body, dict) else None
+        if v is not None and parse_det_conf(v) is None:
+            raise HTTPException(400, 'det_conf phải nằm trong [0.001, 0.99] hoặc null')
+        web_cfg['det_conf'] = parse_det_conf(v)
+        applied = apply_det_conf(runner, web_cfg['det_conf'])
+        return {**det_conf_state(web_cfg), 'applied_now': applied}
 
     @app.get('/api/state')
     def get_state():
@@ -947,9 +970,18 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                 result['fusion'] = info
                 for cam, v in fused.items():
                     job.setdefault('fused', {})[cam] = v['res']
-                    tls[cam] = site_fusion.drop_demoted_alerts(tls[cam], v['drop'])
+                    tls[cam] = site_fusion.add_promoted_alerts(site_fusion.drop_demoted_alerts(tls[cam], v['drop']), v.get('add'))
+                    lv = (job.get('live') or {}).get(cam)
+                    if v.get('add') and lv:                      # video do engine vẽ trước đối chiếu: vẽ thêm khung đỏ cho người bị lan truyền
+                        try:
+                            import site_live
+                            if site_live.paint_promoted(lv, tls[cam], v['add'], id_maps.get(cam) or {}):
+                                job['log'].append(f'[events] {cam}: đã vẽ khung đỏ cho {len(v["add"])} sự kiện lan truyền vào live.mp4')
+                        except Exception as e:                      # noqa: BLE001 - lỗi vẽ video không làm hỏng kết quả
+                            job['log'].append(f'[events] {cam}: không vẽ được khung đỏ vào video ({type(e).__name__}: {e})')
                 n_dem = sum(1 for e in info['events'] if e['status'] == 'conflict')
-                job['log'].append(f'[events] đối chiếu chéo camera ({info["policy"]}): {len(info["events"])} cảnh báo, {n_dem} bị hạ xuống "cần xem lại" vì camera khác không xác nhận')
+                job['log'].append(f'[events] đối chiếu chéo camera ({info["policy"]}): người bất thường {info.get("anomaly_persons") or []}, '
+                                  f'{len(info.get("propagated") or [])} sự kiện được lan sang camera khác, {n_dem} bị hạ xuống "cần xem lại"')
         except Exception as e:                          # noqa: BLE001 - đối chiếu lỗi: giữ kết quả riêng từng camera
             job['log'].append(f'[events] đối chiếu chéo lỗi: {type(e).__name__}: {e}')
         for cam, tl in tls.items():

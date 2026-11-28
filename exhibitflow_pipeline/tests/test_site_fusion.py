@@ -76,3 +76,30 @@ if __name__ == '__main__':
         if n.startswith('test_'):
             fn()
             print('ok', n)
+
+
+def test_person_policy_propagates_anomaly_to_other_camera():
+    a = dict(cam([(0, 2, 1, 3, 'ANOMALY', .99)], [2]), id_map={2: 7})
+    b = dict(cam([(0, 5, 1.2, 3.2, 'NORMAL', 0.0), (1, 6, 1.2, 3.2, 'NORMAL', 0.0)], [5, 6]), id_map={5: 7, 6: 8})   # 5 = người 7, 6 = người khác
+    f, info = sf.fuse(dict(A=a, B=b), 'person')
+    assert decisions(f, 'B') == ['ANOMALY', 'NORMAL']                              # chỉ người 7 bị đánh dấu
+    assert f['B']['res']['events'][0]['xcam']['status'] == 'propagated' and f['B']['res']['summary']['has_anomaly']
+    assert [al['track_id'] for al in f['B']['res']['alerts']] == [5] and f['B']['add'][0]['tid'] == 5
+    assert info['anomaly_persons'] == [7] and decisions(f, 'A') == ['ANOMALY']
+    assert b['res']['events'][0]['decision'] == 'NORMAL'                           # dữ liệu vào không bị sửa
+    assert sf.add_promoted_alerts(b['tl'], f['B']['add'])['alerts'][0]['behavior'] == 'touching'
+
+
+def test_person_policy_ignores_weak_anomaly_and_no_overlap():
+    a = dict(cam([(0, 2, 1, 3, 'ANOMALY', 0.0)], [2]), id_map={2: 7})             # conf 0.0: không đủ để lan
+    b = dict(cam([(0, 5, 1, 3, 'NORMAL', 0.0)], [5]), id_map={5: 7})
+    assert decisions(sf.fuse(dict(A=a, B=b), 'person')[0], 'B') == ['NORMAL']
+    a2 = dict(cam([(0, 2, 1, 3, 'ANOMALY', .99)], [2]), id_map={2: 7})
+    b2 = dict(cam([(0, 5, 8, 9, 'NORMAL', 0.0)], [5]), id_map={5: 7})             # cùng người nhưng thời điểm khác hẳn
+    assert decisions(sf.fuse(dict(A=a2, B=b2), 'person')[0], 'B') == ['NORMAL']
+
+
+def test_default_policy_is_person(monkeypatch=None):
+    import os
+    os.environ.pop('EXHIBITFLOW_XCAM_POLICY', None)
+    assert sf.policy() == 'person'
