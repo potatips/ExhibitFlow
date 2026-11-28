@@ -1,9 +1,0 @@
-work/
-results/
-weights/*
-!weights/README.md
-__pycache__/
-*.pyc
-*.egg-info/
-.pytest_cache/
-dashboard_data/
