@@ -404,7 +404,7 @@ def _profile_tracker(tr):
 class ByteTrackDMALTC:
     """Tham số mặc định = `make track-video-full-torch` (tools/track_video_bench.py), tinh chỉnh giảm ID switch và giữ track dự đoán."""
 
-    def __init__(self, device=GPU_A, with_reid=True, track_thresh=0.5, track_buffer=75, match_thresh=0.9,
+    def __init__(self, device=GPU_A, with_reid=True, track_thresh=0.5, track_buffer=30, match_thresh=0.9,
                  reid_model='osnet_x0_25', reid_ckpt='osnet_x0_25.pth', reid_weight=0.5, reid_thresh=0.6,
                  ltc_ckpt='ltc_motion_mot17.pth', ltc_min_history=10, dma_ckpt='dma_gbm_mot17.gbm',
                  min_box_area=100, max_aspect=1.6, keep_predicted_frames=8,
