@@ -1016,8 +1016,6 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                 raise RuntimeError('Pipeline map2d không tạo ra site_result.json')
             job['out'] = out
             if job['events']:
-                # bản đồ + vị trí người đã có: giữ một bản chụp để web hiện dần trong lúc engine còn phân tích hành vi
-                job['preview'] = json.loads((out / 'site_result.json').read_text(encoding='utf-8'))
                 site_events_stage(job, site)
             job['stage'], job['status'] = len(job['stages']) - 1, 'done'
         except BaseException as e:                         # noqa: BLE001
@@ -1155,20 +1153,12 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                     part = min(1.0, max(0.0, state.frame_idx / state.n_frames))
         return round((k + part) / n, 3)
 
-    @app.get('/api/site-jobs/{jid}/preview')
-    def site_job_preview(jid: str):
-        """Bản đồ ghép + vị trí người trước khi phân tích hành vi xong (chưa có `events`)."""
-        j = get_site_job(jid)
-        if j.get('preview') is None:
-            raise HTTPException(409, 'Chưa có bản đồ tạm')
-        return j['preview']
-
     @app.get('/api/site-jobs/{jid}')
     def site_job_status(jid: str):
         j = get_site_job(jid)
         return dict(status=j['status'], stage=j['stage'], stages=j['stages'], error=j['error'], cameras=list(j['videos']),
                     log=[l for l in j['log'][-8:]], elapsed=round(time.time() - j['t0']),
-                    preview=j.get('preview') is not None, progress=site_progress(j))
+                    progress=site_progress(j))
 
     @app.get('/api/site-jobs/{jid}/result')
     def site_job_result(jid: str):

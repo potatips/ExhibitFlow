@@ -289,8 +289,8 @@ function mapScene(t){
       MAP.series={frames,tracks:EFPlay.buildTracks(frames)}}
     const events=DATA.events.filter(e=>e.decision==='ANOMALY').map(e=>({id:e.track,behavior:e.behavior,start:e.start}));
     return{frames:MAP.series.frames,tracks:MAP.series.tracks,events,t:S.videoURL?t:Infinity,live:false}}
-  const frames=MAP.hist,last=frames[frames.length-1];
-  return{frames,tracks:EFPlay.buildTracks(frames),events:[...MAP.flagged.values()],t:last?last.t:0,live:true}}
+  const frames=MAP.hist,last=frames[frames.length-1],live=!!LIVE||S.running;
+  return{frames,tracks:EFPlay.buildTracks(frames),events:[...MAP.flagged.values()],t:live||!S.videoURL?(last?last.t:0):t,live}}
 /* mọi người (chấm di chuyển) cho tới khi có hành vi bất thường; sau đó chỉ người bất thường kèm vệt đi */
 function drawScenePeople(x,scene,X,Y,ink,metricStroke){
   if(!scene.filtered){
@@ -320,7 +320,12 @@ function drawRealMap(c,t){
   for(const a of MAP.arts){x.fillStyle='#5B9BEA';x.fillRect(X(a.x)-6,Y(a.y)-6,12,12);x.fillStyle='#fff';x.font='600 11px Segoe UI';x.fillText('Hiện vật '+a.id,X(a.x),Y(a.y)-10)}
   const m=mapScene(t);
   drawScenePeople(x,EFPlay.sceneAt(m.tracks,m.events,m.t),X,Y,'#fff',false)}
+/* chế độ Video đang xử lý: chưa vẽ map, chỉ chạy khi đã xong 100% (Realtime vẫn vẽ trực tiếp) */
+const mapOnHold=()=>S.running&&!LIVE&&S.mode==='batch'&&!camMode();
+function drawMapHold(c){const {x,w,h}=fit(c);x.clearRect(0,0,w,h);x.fillStyle='#FFFFFF';x.fillRect(0,0,w,h);x.fillStyle='#555C66';x.font='13px Segoe UI';x.textAlign='center';
+  x.fillText(`Đang xử lý ${Math.round(S.progress)}% — map chạy khi xong 100%`,w/2,h/2);MAP.shown=0;MAP.unit='người';setMapInfo('')}
 function drawMapPanel(t,c=$('#map')){   // true nếu đã vẽ map thật; false thì vẽ khung giữ chỗ như cũ
+  if(mapOnHold()){drawMapHold(c);return false}
   if(typeof SITEDATA!=='undefined'&&SITEDATA){drawSiteMap(c,t);return true}
   if(MAP.img&&MAP.img.complete&&MAP.img.naturalWidth){
     drawRealMap(c,t);
@@ -347,6 +352,7 @@ function drawMapPanels(t){
 /* ---------- Phát lại ---------- */
 function setPlaying(p){S.playing=p;$('#play').textContent=p?'⏸':'▶';if(S.videoURL)p?vid.play().catch(()=>{}):vid.pause()}
 function seek(t){S.t=clamp(t,0,D);if(S.videoURL)vid.currentTime=S.t}
+vid.addEventListener('ended',()=>setPlaying(false));
 vid.addEventListener('loadedmetadata',()=>{if(!S.loaded&&vid.duration)D=vid.duration});
 /* lỗi ngoài dự kiến ở bất kỳ đâu: nhắc thử lại (không quá 1 lần mỗi 5 giây), chi tiết nằm ở console */
 let _unexpectedAt=-1e9;
@@ -360,7 +366,6 @@ function tick(now){const dt=(now-last)/1000;last=now;
   try{paint()}catch(err){unexpected(err)}
   requestAnimationFrame(tick)}
 function paint(){const t=S.t,L=$('#live');
-  advanceSiteReveal();
   if(LIVE){const {x,w,h}=fit($('#scene'));x.clearRect(0,0,w,h);
     $('#ph').style.left=(D?t/D*100:0)+'%';$('#time').textContent=fmt(t)+' / '+fmt(D);L.hidden=false;
     if(LIVE.banner&&performance.now()<LIVE.banner.until){L.className='live '+LIVE.banner.cls;L.textContent=LIVE.banner.text}else{L.className='live grn';L.textContent='● LIVE'}
@@ -498,7 +503,9 @@ async function startAnalysis(){
     else if(CFG.demo)await(S.mode==='rt'?runDemoRealtime(cam):runDemo());
     else{setStatus('Mất kết nối');logLine('Chưa kết nối backend. Vào Settings: nhập URL, hoặc bật "Chạy trực tiếp trên GPU server" nếu trang này được mở từ chính server.')}
   }catch(err){console.error(err);resetMap();hideLive();logLine(EFErr.friendly(err),true);setStatus('Xin thử lại')}
-  finally{setBusy(false);pollSystem()}}
+  finally{setBusy(false);autoPlay();pollSystem()}}
+/* xử lý xong 100%: phát video từ đầu để map, heatmap, luồng đi chạy theo (video đã tắt tiếng nên trình duyệt cho tự phát) */
+function autoPlay(){if(S.mode!=='batch'||camMode()||S.cancel||!S.videoURL||S.progress<100)return;seek(0);setPlaying(true)}
 
 /* ---------- Nhiều camera: mỗi video chạy riêng, mỗi camera một tab (video, cảnh báo, map riêng) ---------- */
 S.files=[];let CAMRES=[],CAMIDX=-1;
@@ -559,10 +566,7 @@ async function runSite(files,siteId){
     logLine(`[${j.stage+1}/${j.stages.length}] ${j.stages[j.stage]}`);
     if(j.status==='error')throw new Error(j.error);
     if(j.status==='done')break;
-    if(j.preview){                                // bản đồ ghép đã xong, engine còn đang phân tích hành vi: mở dần theo tiến độ
-      if(!SITEDATA){try{const d=await setSiteData(await(await API.f(`/api/site-jobs/${id}/preview`)).json(),id);d.live=true;d.upto=0;d.target=0}catch(err){console.warn('Chưa lấy được bản đồ tạm',err)}}
-      if(SITEDATA){SITEDATA.target=Math.max(SITEDATA.target,(j.progress||0)*SITEDATA.duration);
-        S.progress=(2+(j.progress||0))/j.stages.length*100;renderKpis()}}
+    if(j.stage===2&&j.progress){S.progress=(2+j.progress)/j.stages.length*100;renderKpis()}    // engine đang phân tích hành vi
     await sleep(1500)}
   }catch(err){resetMap();throw err}
   const res=await(await API.f(`/api/site-jobs/${id}/result`)).json();
@@ -577,13 +581,10 @@ async function runSite(files,siteId){
       await Promise.all((camRes.events||[]).filter(e=>e.task).map(async e=>{imgs[e.event_id]=await blobUrl(`/api/site-jobs/${id}/files/${m.cam}/vlm_inputs/${e.task}/sheet.jpg`)}));
       data=fromResult(camRes,e=>imgs[e.event_id])}catch(err){console.warn('Không đọc được result.json của',m.cam,err)}
     CAMRES.push({name:m.file.name,label:site.labels[m.cam]||m.cam,cam:m.cam,data,videoURL:await blobUrl(`/api/site-jobs/${id}/video/${m.cam}`),map:MAP})}
-  showCam(0);setStatus(`Hoàn tất ${CAMRES.length} camera`);
+  S.progress=100;showCam(0);renderKpis();setStatus(`Hoàn tất ${CAMRES.length} camera`);
   logLine('');return true}
-/* thời điểm đang hiển thị: đang xử lý thì theo tiến độ engine, xong thì theo video đang phát */
-function siteTime(t){return SITEDATA.live?SITEDATA.upto:(S.videoURL?t:Infinity)}
-let _revealAt=0;
-function advanceSiteReveal(){const now=performance.now(),dt=Math.min(.5,(now-_revealAt)/1000);_revealAt=now;
-  if(typeof SITEDATA!=='undefined'&&SITEDATA&&SITEDATA.live)SITEDATA.upto+=(SITEDATA.target-SITEDATA.upto)*Math.min(1,dt*1.5)}
+/* thời điểm đang hiển thị = thời điểm video đang phát */
+function siteTime(t){return S.videoURL?t:Infinity}
 function buildSiteData(res){
   const d={bounds:res.bounds,cams:res.cameras,frames:res.frames,fps:res.fps,events:res.events||[],artifacts:res.artifacts||[],err:res.events_error||null,engine:res.engine||[],mapSource:res.map_source||'',mapNote:res.map_note||null};
   d.tracks=EFPlay.buildTracks(d.frames);
@@ -645,8 +646,7 @@ function drawSiteMap(c,t){
   const scene=EFPlay.sceneAt(D_.tracks,D_.evs,T);
   drawScenePeople(x,scene,X,Y,B.ink,!!D_.mapImg);
   if(D_.err){x.fillStyle='#555C66';x.font='13px Segoe UI';x.textAlign='center';x.fillText('Không phân tích được hành vi, xin thử lại',w/2,h-18)}
-  setMapInfo(D_.live?`Đang xử lý: map hiện tới giây ${Math.min(T,D_.duration).toFixed(1)} / ${D_.duration.toFixed(1)}`
-    :scene.filtered?`${scene.trails.length} người bất thường · ${D_.events.length} hành vi`
+  setMapInfo(scene.filtered?`${scene.trails.length} người bất thường · ${D_.events.length} hành vi`
     :D_.err?'Chưa phân tích được hành vi, xin thử lại':`${scene.people.length} người${D_.events.length?'':' · chưa thấy hành vi bất thường'}`)}
 
 /* ---------- Heatmap: phân tích mật độ, lượt khách & điểm dừng chân (xem js/heatmap.js) ---------- */
