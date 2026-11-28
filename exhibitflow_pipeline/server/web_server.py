@@ -898,17 +898,20 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                 job['log'].append(f'[events] chạy song song {len(job["videos"])} camera (mỗi camera một tiến trình + VLM riêng)...')
                 got = site_parallel.run(job['videos'], state.root / 'sites' / job['id'] / 'cams',
                                         dict(state.settings, realtime=False, make_map=False, map_image='auto', max_frames=maxf),
-                                        args, job['log'].append, local=local, max_parallel=par_n)
+                                        args, job['log'].append, local=local, max_parallel=par_n,
+                                        on_progress=lambda f: job.__setitem__('par_progress', f))
                 for cam, (tl, idm) in got.items():
                     tls[cam], id_maps[cam] = tl, idm
             except Exception as e:                      # noqa: BLE001 - song song lỗi (vd. thiếu VRAM): lùi về chạy tuần tự, kết quả vẫn đúng
                 job['log'].append(f'[events] chạy song song lỗi ({type(e).__name__}: {str(e)[:200]}): chuyển sang chạy tuần tự')
+                job.pop('par_progress', None)
                 tls.clear()
                 runner.preload()
         if not tls:                                     # luồng tuần tự (và đường lùi)
             gallery = {}                                # ngoại hình theo ID chung, dùng chung các camera
             try:
-                for cam, path in job['videos'].items():
+                for k, (cam, path) in enumerate(job['videos'].items()):
+                    job['seq'] = (k, len(job['videos']))
                     job['log'].append(f'[events] {site["cameras"][cam].get("label", cam)}: phân tích hành vi bất thường...')
                     try:
                         app_site_ids['labeler'], app_site_ids['votes'] = None, {}
@@ -981,6 +984,8 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                 raise RuntimeError('Pipeline map2d không tạo ra site_result.json')
             job['out'] = out
             if job['events']:
+                # bản đồ + vị trí người đã có: giữ một bản chụp để web hiện dần trong lúc engine còn phân tích hành vi
+                job['preview'] = json.loads((out / 'site_result.json').read_text(encoding='utf-8'))
                 site_events_stage(job, site)
             job['stage'], job['status'] = len(job['stages']) - 1, 'done'
         except BaseException as e:                         # noqa: BLE001
@@ -1104,11 +1109,34 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
             raise HTTPException(404, 'Không có job này')
         return j
 
+    def site_progress(j):
+        """Phần video (0-1) engine đã phân tích xong ở bước hành vi bất thường."""
+        if j['stage'] != 2:
+            return 1.0 if j['status'] == 'done' else 0.0
+        if 'par_progress' in j:                      # chạy song song: camera chậm nhất
+            return round(j['par_progress'], 3)
+        k, n = j.get('seq') or (0, 1)                # chạy tuần tự: camera đã xong + phần của camera đang chạy
+        part = 0.0
+        if runner.running():
+            with state.lock:
+                if state.status == 'running' and state.n_frames:
+                    part = min(1.0, max(0.0, state.frame_idx / state.n_frames))
+        return round((k + part) / n, 3)
+
+    @app.get('/api/site-jobs/{jid}/preview')
+    def site_job_preview(jid: str):
+        """Bản đồ ghép + vị trí người trước khi phân tích hành vi xong (chưa có `events`)."""
+        j = get_site_job(jid)
+        if j.get('preview') is None:
+            raise HTTPException(409, 'Chưa có bản đồ tạm')
+        return j['preview']
+
     @app.get('/api/site-jobs/{jid}')
     def site_job_status(jid: str):
         j = get_site_job(jid)
         return dict(status=j['status'], stage=j['stage'], stages=j['stages'], error=j['error'], cameras=list(j['videos']),
-                    log=[l for l in j['log'][-8:]], elapsed=round(time.time() - j['t0']))
+                    log=[l for l in j['log'][-8:]], elapsed=round(time.time() - j['t0']),
+                    preview=j.get('preview') is not None, progress=site_progress(j))
 
     @app.get('/api/site-jobs/{jid}/result')
     def site_job_result(jid: str):
@@ -1186,7 +1214,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         vfps = j['vinfo']['fps'] or 25.0
         with state.lock:
             has = state.map_path is not None and Path(state.map_path).is_file()
-            out = dict(has_map=has, version=state.map_version, fps=vfps,
+            out = dict(has_map=has, version=state.map_version, fps=vfps, frame=state.frame_idx,
                        people=[dict(id=p['id'], x=round(p['x'], 4), y=round(p['y'], 4), state=p.get('state', 'idle')) for p in state.people],
                        artifacts=[dict(id=a['id'], x=round(a['x'], 4), y=round(a['y'], 4)) for a in state.artifacts])
             if full and finished(j):

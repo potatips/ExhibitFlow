@@ -40,7 +40,7 @@ def collect(croot):
     return out, {int(t): int(max(v, key=v.get)) for t, v in votes.items() if v}
 
 
-def run(videos, root, settings, setup_args, log, local=False, max_parallel=None, poll_s=2.0, timeout_s=7200):
+def run(videos, root, settings, setup_args, log, local=False, max_parallel=None, poll_s=2.0, timeout_s=7200, on_progress=None):
     """videos {cam: đường dẫn}; setup_args {cam: tham số cho site_live.setup}. Trả {cam: (timeline, id_map)}.
     max_parallel: số camera chạy cùng lúc (None = tất cả). Lỗi bất kỳ -> ném RuntimeError (nơi gọi lùi về chạy tuần tự)."""
     from exhibitflow import cam_worker
@@ -70,6 +70,9 @@ def run(videos, root, settings, setup_args, log, local=False, max_parallel=None,
                     if last.get(c) != key:
                         last[c] = key
                         log(f'[parallel] {c}: {v["status"]} {int(v["progress"] * 100)}%')
+                if on_progress:                                # phần video mọi camera đã qua (các lô trước tính là xong)
+                    slow = min(v['progress'] if v['status'] != 'done' else 1.0 for v in views.values())
+                    on_progress((i + slow * len(batch)) / len(cams))
                 if all(v['status'] == 'done' for v in views.values()):
                     break
                 if time.time() - t0 > timeout_s:

@@ -262,7 +262,8 @@
     }
 
     const pCap = pos.length >= 10 ? percentile(pos, clipP) : maxVal;
-    const cap = pCap > 1e-9 ? pCap : maxVal;
+    // opts.fixedCap: giữ nguyên thang màu của cả video khi vẽ heatmap tích luỹ theo thời gian
+    const cap = opts && opts.fixedCap > 0 ? opts.fixedCap : pCap > 1e-9 ? pCap : maxVal;
     const denom = logAlpha > 0 ? Math.log1p(logAlpha) : 1;
     let activeCells = 0;
 
@@ -651,7 +652,7 @@
       // visitorsRaw already has disk spatial support (<=1 per visitor per cell), so use light anti-alias blur
       const modeSigma = modeName === "visitors" ? Math.max(0.8, sigmaCells * 0.45) : sigmaCells;
       const smoothed = gaussianBlur(rawMap[modeName], nx, ny, modeSigma);
-      const { norm, max, cap, activeCells } = normalizeGrid(smoothed, o);
+      const { norm, max, cap, activeCells } = normalizeGrid(smoothed, o.caps ? { ...o, fixedCap: o.caps[modeName] } : o);
       const hotspots = findHotspots(
         smoothed,
         nx,
