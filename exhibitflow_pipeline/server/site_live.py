@@ -8,7 +8,6 @@ Tiến trình con không có các bản vá mà `create_app` chỉ áp ở tiế
 Ngoại hình (gallery) chỉ dùng trong camera này: các tiến trình không chia sẻ bộ nhớ, ghép ID dựa vào vị trí sàn so với map chung.
 """
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -28,22 +27,7 @@ def _apply_det_conf(runner, conf):
         det.kw['conf'] = float(conf)
 
 
-def clip_window(env=None):
-    """Đoạn clip gửi VLM cho bản web: (giây sau sự kiện, độ dài tối đa). Mặc định 1 s / 8 s thay vì 3 s / 10 s của engine: với 3 s,
-    clip của lúc người mới đi ngang hiện vật chứa luôn cú chạm xảy ra SAU đó, nên VLM gán "touching" cho cả đoạn đầu.
-    Đổi lại được bằng EXHIBITFLOW_POST_SEC / EXHIBITFLOW_MAX_WINDOW_SEC."""
-    env = os.environ if env is None else env
-    return float(env.get('EXHIBITFLOW_POST_SEC') or 1.0), float(env.get('EXHIBITFLOW_MAX_WINDOW_SEC') or 8.0)
-
-
-def apply_clip_window():
-    from exhibitflow import settings
-    post, longest = clip_window()
-    settings.EXPORT.update(post_sec=post, max_window_sec=longest)
-
-
 def setup(args, cam):
-    apply_clip_window()
     import exhibitflow.engine as eng_mod
     import exhibitflow.service as svc
     import site_events

@@ -67,7 +67,6 @@ import site_events  # noqa: E402
 import site_fusion  # noqa: E402
 import site_parallel  # noqa: E402
 import site_runner  # noqa: E402
-import site_live  # noqa: E402
 
 ALLOWED = {'.mp4', '.avi', '.mov', '.mkv', '.webm'}
 
@@ -144,8 +143,6 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
         state.save_settings(dict(pipeline_mode=mode))
     # mặc định bật khi khởi động (preload nạp model đúng cấu hình ngay, không phải nạp lại ở lần chạy đầu); web gửi lại mỗi lần chạy
     state.save_settings(dict(tracker_process=True, hand_process=True, pose_process=True, hand_batch=True, drop_frames=True))
-    if not demo:
-        site_live.apply_clip_window()                  # clip gửi VLM ngắn lại (xem site_live.clip_window)
     if not demo and os.environ.get('EXHIBITFLOW_SAVE_VIDEO', '1') != '0':
         # Engine.run đặt RT['render_live']=False trước mỗi lần chạy, nên bật lại ngay trước run_video (không sửa file của Hưng):
         # engine ghi live.mp4 (video đã vẽ khung người / hiện vật) để web xem lại sau khi chạy xong.
