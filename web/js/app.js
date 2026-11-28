@@ -169,10 +169,10 @@ const EMPTY={meta:{duration:60,camera_id:'',width:1280,height:720,nw:960},arts:[
 
 /* ---------- Backend ---------- */
 const NGROK_H={'ngrok-skip-browser-warning':'1'};
-async function errText(r){try{const j=await r.json();return j.detail||JSON.stringify(j)}catch{return r.status+' '+r.statusText}}
+async function errText(r){try{return (await r.json()).detail}catch{return ''}}
 const API={direct:(()=>{try{return localStorage.getItem('ef_direct')==='1'}catch{return false}})(),
   base:(()=>{try{return localStorage.getItem('ef_direct')==='1'?'':(localStorage.getItem('ef_api')||'')}catch{return ''}})(),ok:false,
-  async f(p,o={}){const r=await fetch(this.base+p,{...o,headers:{...NGROK_H,...(o.headers||{})}});if(!r.ok)throw new Error(await errText(r));return r},
+  async f(p,o={}){const r=await fetch(this.base+p,{...o,headers:{...NGROK_H,...(o.headers||{})}});if(!r.ok)throw EFErr.httpError(r.status,await errText(r));return r},
   async ping(){this.ok=false;
     /* Chế độ trực tiếp / chưa nhập URL: thử cùng origin (trang được chính GPU server phục vụ) */
     if(this.direct||this.base||location.protocol!=='file:'){try{const r=await fetch(this.base+'/api/health',{headers:NGROK_H,signal:AbortSignal.timeout(6000)});this.ok=r.ok}catch{this.ok=false}}
@@ -193,7 +193,7 @@ const API={direct:(()=>{try{return localStorage.getItem('ef_direct')==='1'}catch
 const noisyLog=l=>/\d+%\||it\/s|s\/it|^Fetching \d+ files|\[\d+:\d+<|[█▏▎▍▌▋▊▉]/.test(l);
 /* Chỉ hiện tên bước đang chạy (không hiện log thô của pipeline như [DMA] ..., đường dẫn checkpoint) */
 function stageLine(j,seen){const n=(j.stages||[]).length,i=j.stage;if(j.status==='running'&&n&&i>=0&&i<n&&!seen.has('s'+i)){seen.add('s'+i);logLine(`[${i+1}/${n}] ${j.stages[i]}`)}}
-function logLine(m){const el=$('#srcmsg');el.textContent=m;el.className='srcmsg'+(/^(LỖI|Chưa|Camera chưa)/.test(m)?' err':'')}
+function logLine(m,bad){const el=$('#srcmsg');el.textContent=m;el.className='srcmsg'+(bad||/^(Chưa|Camera chưa)/.test(m)?' err':'')}
 function setStatus(t){$('#vstat').textContent=t}
 function setBusy(b){S.running=b;$('#modeSel').classList.toggle('lock',b);$('#runBtn').disabled=b;$('#stopBtn').disabled=!b;$('#uploadBtn').disabled=b;$('#src').disabled=b;$('#camSel').disabled=b;$('#camUrl').disabled=b;if(b)$('#runBtn').textContent='Đang chạy…';else applySourceUI()}
 
@@ -348,10 +348,17 @@ function drawMapPanels(t){
 function setPlaying(p){S.playing=p;$('#play').textContent=p?'⏸':'▶';if(S.videoURL)p?vid.play().catch(()=>{}):vid.pause()}
 function seek(t){S.t=clamp(t,0,D);if(S.videoURL)vid.currentTime=S.t}
 vid.addEventListener('loadedmetadata',()=>{if(!S.loaded&&vid.duration)D=vid.duration});
+/* lỗi ngoài dự kiến ở bất kỳ đâu: nhắc thử lại (không quá 1 lần mỗi 5 giây), chi tiết nằm ở console */
+let _unexpectedAt=-1e9;
+function unexpected(err){const now=performance.now();if(now-_unexpectedAt<5000)return;_unexpectedAt=now;console.error(err);logLine(EFErr.RETRY,true)}
+window.addEventListener('error',e=>unexpected(e.error||e.message));
+window.addEventListener('unhandledrejection',e=>unexpected(e.reason));
+vid.addEventListener('error',()=>{if(vid.getAttribute('src'))logLine('Không phát được video này, xin thử lại với file MP4 (H.264).',true)});
 let last=performance.now();
 function tick(now){const dt=(now-last)/1000;last=now;
   if(S.videoURL)S.t=vid.currentTime||0;else if(S.playing){S.t+=dt*S.speed;if(S.t>=D){S.t=D;setPlaying(false)}}
-  paint();requestAnimationFrame(tick)}
+  try{paint()}catch(err){unexpected(err)}
+  requestAnimationFrame(tick)}
 function paint(){const t=S.t,L=$('#live');
   advanceSiteReveal();
   if(LIVE){const {x,w,h}=fit($('#scene'));x.clearRect(0,0,w,h);
@@ -490,7 +497,7 @@ async function startAnalysis(){
     else if(API.ok)await(S.mode==='rt'?runRealtime(src,cam):runLive(src));
     else if(CFG.demo)await(S.mode==='rt'?runDemoRealtime(cam):runDemo());
     else{setStatus('Mất kết nối');logLine('Chưa kết nối backend. Vào Settings: nhập URL, hoặc bật "Chạy trực tiếp trên GPU server" nếu trang này được mở từ chính server.')}
-  }catch(err){logLine('LỖI: '+err.message);setStatus('Lỗi')}
+  }catch(err){console.error(err);resetMap();hideLive();logLine(EFErr.friendly(err),true);setStatus('Xin thử lại')}
   finally{setBusy(false);pollSystem()}}
 
 /* ---------- Nhiều camera: mỗi video chạy riêng, mỗi camera một tab (video, cảnh báo, map riêng) ---------- */
@@ -536,7 +543,7 @@ async function runSite(files,siteId){
     site={site_id:siteId,name:'Hiệu chuẩn tự nhập',cameras:ids,labels:Object.fromEntries(files.map((f,i)=>[ids[i],`CAM ${i+1} · ${f.name}`]))};
     map=files.map((f,i)=>({cam:ids[i],file:f}))}
   else{site=SITES.find(s=>s.site_id===siteId);map=assignCams(files,site)}
-  if(!map.length)throw new Error('Không gán được video vào camera của địa điểm này');
+  if(!map.length)throw EFErr.userError('Không gán được video vào camera của địa điểm này');
   if(files.length>map.length)logLine(`Địa điểm ${site.name} chỉ có ${site.cameras.length} camera: bỏ qua ${files.length-map.length} video thừa.`);
   CAMRES=[];CAMIDX=-1;renderCamTabs();resetMap();
   const fd=new FormData();fd.append('site',siteId);fd.append('events','1');
@@ -571,10 +578,7 @@ async function runSite(files,siteId){
       data=fromResult(camRes,e=>imgs[e.event_id])}catch(err){console.warn('Không đọc được result.json của',m.cam,err)}
     CAMRES.push({name:m.file.name,label:site.labels[m.cam]||m.cam,cam:m.cam,data,videoURL:await blobUrl(`/api/site-jobs/${id}/video/${m.cam}`),map:MAP})}
   showCam(0);setStatus(`Hoàn tất ${CAMRES.length} camera`);
-  const ids=new Set(res.frames.flatMap(f=>f.people.map(p=>p.id)));
-  const eng=SITEDATA.engine.map(e=>`${(site.labels[e.cam]||e.cam).split(' · ')[0]}: ${e.tracks} người theo dõi, ${e.contact_s}s chạm, ${e.alerts} bất thường`).join(' · ');
-  logLine(`Hoàn tất: ${CAMRES.length} camera ghép thành một map chung, ${ids.size} người (ID chung)`+(res.events!==undefined?`, ${SITEDATA.events.length} hành vi bất thường.`:'.')
-    +(eng&&!SITEDATA.events.length?` Engine thấy → ${eng}.`:'')+(SITEDATA.err?` Lưu ý: ${SITEDATA.err}`:'')+(res.map_source==='fallback'?` Lưu ý: repo không dựng được mặt bằng nên đang vẽ lưới${res.map_note?' ('+String(res.map_note).slice(0,90)+')':''}.`:''));return true}
+  logLine('');return true}
 /* thời điểm đang hiển thị: đang xử lý thì theo tiến độ engine, xong thì theo video đang phát */
 function siteTime(t){return SITEDATA.live?SITEDATA.upto:(S.videoURL?t:Infinity)}
 let _revealAt=0;
@@ -623,10 +627,14 @@ function siteCams(B,heat){
   D_.cams.forEach((cm,i)=>{const col=SITE_COLORS[i%SITE_COLORS.length],on=cm.id===active;
     x.beginPath();cm.fov.forEach((p,k)=>k?x.lineTo(X(p[0]),Y(p[1])):x.moveTo(X(p[0]),Y(p[1])));x.closePath();
     if(!heat){x.globalAlpha=on?.28:.13;x.fillStyle=col;x.fill()}
-    x.globalAlpha=on?.9:.45;x.strokeStyle=col;x.lineWidth=on?2:1;x.stroke();x.globalAlpha=1;
-    x.fillStyle=col;x.beginPath();x.arc(X(cm.center[0]),Y(cm.center[1]),6,0,7);x.fill();
-    x.fillStyle='#111214';x.font='600 11px Segoe UI';x.textAlign='left';x.fillText(cm.id,X(cm.center[0])+9,Y(cm.center[1])+4)});
-  x.restore()}
+    x.globalAlpha=on?.9:.45;x.strokeStyle=col;x.lineWidth=on?2:1;x.stroke();x.globalAlpha=1});
+  x.restore();
+  D_.cams.forEach((cm,i)=>{const px=X(cm.center[0]),py=Y(cm.center[1]);
+    x.fillStyle=SITE_COLORS[i%SITE_COLORS.length];x.beginPath();x.arc(px,py,6,0,7);x.fill();
+    x.fillStyle='#111214';x.font='600 11px Segoe UI';
+    const left=px+9+x.measureText(cm.id).width>B.w-2;               // sát mép phải: ghi tên bên trái, phía trên chấm
+    x.textAlign=left?'right':'left';x.fillText(cm.id,left?px-9:px+9,py+(left?-6:4))});
+  x.textAlign='left'}
 const BEHC={stealing:'#FF4D4D',holding:'#FF7A1A',touching:'#FFB020'};
 /* map hành vi chạy theo video: mọi người cho tới khi phát hiện bất thường, sau đó chỉ người bất thường kèm vệt đi */
 function drawSiteMap(c,t){
@@ -636,10 +644,10 @@ function drawSiteMap(c,t){
   siteCams(B,false);
   const scene=EFPlay.sceneAt(D_.tracks,D_.evs,T);
   drawScenePeople(x,scene,X,Y,B.ink,!!D_.mapImg);
-  if(D_.err){x.fillStyle='#555C66';x.font='13px Segoe UI';x.textAlign='center';x.fillText('Không phân tích được hành vi: '+D_.err.slice(0,70),w/2,h-18)}
+  if(D_.err){x.fillStyle='#555C66';x.font='13px Segoe UI';x.textAlign='center';x.fillText('Không phân tích được hành vi, xin thử lại',w/2,h-18)}
   setMapInfo(D_.live?`Đang xử lý: map hiện tới giây ${Math.min(T,D_.duration).toFixed(1)} / ${D_.duration.toFixed(1)}`
     :scene.filtered?`${scene.trails.length} người bất thường · ${D_.events.length} hành vi`
-    :D_.err?'Chưa phân tích được hành vi':`${scene.people.length} người${D_.events.length?'':' · chưa thấy hành vi bất thường'}`)}
+    :D_.err?'Chưa phân tích được hành vi, xin thử lại':`${scene.people.length} người${D_.events.length?'':' · chưa thấy hành vi bất thường'}`)}
 
 /* ---------- Heatmap: phân tích mật độ, lượt khách & điểm dừng chân (xem js/heatmap.js) ---------- */
 const HEATRAMP=EFHeat.HEATRAMP;
@@ -1074,7 +1082,7 @@ function applySourceUI(){
   const rt=S.mode==='rt',cam=camMode();
   $('#srcFile').hidden=cam;$('#srcCam').hidden=!cam;$('#camUrl').hidden=!(cam&&$('#camSel').value==='__url');
   $('#runBtn').textContent=rt?'Bắt đầu':'Phân tích';
-  $('#vtitle').textContent=cam?`Camera realtime — ${camChoice().name}`:'Video phân tích — CAM 1'}
+  $('#vtitle').textContent=cam?`Camera realtime — ${camChoice().name}`:'Phân tích'}
 $('#camSel').onchange=applySourceUI;
 $('#camAdd').onclick=()=>{const name=$('#camName').value.trim(),url=$('#camAddUrl').value.trim();if(!name)return;CAMS.push({name,url});saveCams();$('#camName').value='';$('#camAddUrl').value='';renderCams()};
 $('#camList').onclick=e=>{const b=e.target.closest('[data-del]');if(!b)return;CAMS.splice(+b.dataset.del,1);saveCams();renderCams()};
