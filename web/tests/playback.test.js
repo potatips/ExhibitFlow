@@ -55,3 +55,16 @@ test("a fixed colour scale keeps partial heat on the full-run scale", () => {
   assert.strictEqual(part.modes.presence.cap, full.modes.presence.cap);
   assert.ok(Math.max(...part.modes.presence.norm) < 1);
 });
+
+test("an anomaly is only 'cần xác nhận' until the real contact starts", () => {
+  const raw = { decision: "ANOMALY", start_time_s: 0, end_time_s: 10, alarm_spans: [{ start_time_s: 7, end_time_s: 10 }] };
+  assert.strictEqual(P.alarmOnset(raw, { alarm_start_time_s: 7 }), 7);
+  assert.strictEqual(P.alarmOnset(raw), 7);
+  assert.strictEqual(P.alarmOnset({ ...raw, decision: "CANDIDATE" }), null);
+  assert.strictEqual(P.alarmOnset(raw, { alarm_start_time_s: 0 }), null);
+  const events = [{ id: 1, start: 0, end: 10, onset: 7, decision: "ANOMALY", behavior: "touching", conf: 0.9 }];
+  assert.deepStrictEqual(P.activeEventsAt(events, 1).map((e) => [e.decision, e.behavior]), [["CANDIDATE", "uncertain"]]);
+  assert.deepStrictEqual(P.activeEventsAt(events, 8).map((e) => [e.decision, e.behavior]), [["ANOMALY", "touching"]]);
+  assert.strictEqual(events[0].decision, "ANOMALY");
+});
+

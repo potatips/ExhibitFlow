@@ -41,7 +41,7 @@ function fromResult(res,imgFor){
   const al=Object.fromEntries((res.alerts||[]).map(a=>[a.event_id,a]));
   const why={NORMAL:'VLM đánh giá hành vi bình thường.',CANDIDATE:'VLM chưa đủ chắc chắn để kết luận.',ANOMALY:'VLM kết luận có hành vi bất thường.'};
   const events=(res.events||[]).map(e=>{const a=al[e.event_id];
-    return{id:e.event_id,track:e.track_id,art:e.artifact_id,start:e.start_time_s,end:e.end_time_s,
+    return{id:e.event_id,track:e.track_id,art:e.artifact_id,start:e.start_time_s,end:e.end_time_s,onset:EFPlay.alarmOnset(e,a),
       behavior:e.decision==='CANDIDATE'?'uncertain':e.behavior,decision:e.decision,conf:e.vlm_confidence==null?(a?a.confidence:null):e.vlm_confidence,
       reason:(a&&a.evidence)||e.vlm_evidence||why[e.decision]||'',review:null,img:imgFor?imgFor(e):null}});
   return{real:true,raw:res,meta:{sequence_id:v.key,camera_id:v.name,duration:v.n_frames/fps,fps,width:v.width,height:v.height,nw},arts,tracks:[],events};
@@ -73,7 +73,8 @@ function fit(c){const r=c.getBoundingClientRect(),d=window.devicePixelRatio||1,w
   if(c.width!==w||c.height!==h){c.width=w;c.height=h}const x=c.getContext('2d');x.setTransform(d,0,0,d,0,0);return{x,w:r.width,h:r.height}}
 const proj=(fx,fy)=>{const s=.45+.55*fy;return{x:.5+(fx-.5)*s,y:.24+.7*fy,s}};
 function rr(x,X,Y,W,H,R){x.beginPath();x.roundRect(X,Y,W,H,R)}
-function activeEvents(t){return DATA.events.filter(e=>t>=e.start&&t<=e.end)}
+function activeEvents(t){return EFPlay.activeEventsAt(DATA.events,t)}
+const eventStart=e=>e.onset!=null?e.onset:e.start;          // lúc báo động thật
 
 function drawReal(t){
   const {x,w,h}=fit($('#scene'));x.clearRect(0,0,w,h);
@@ -239,13 +240,16 @@ function renderAlerts(){
     const lab=e.provisional?'Đang chạm':evLabel(e),col=e.provisional?'#C98A00':evColor(e);
     if(!e.img)e.img=DATA.real?noImg():thumb(e);
     const btn=e.review?`<span class="st">✓ ${e.review==='ok'?'Đã xác nhận':'Đã bỏ qua'}</span>`
-      :`<button class="btn sm" data-seek="${e.start}">Xem lại</button>${(e.decision==='NORMAL'||e.provisional)?'':`<button class="btn sm" data-rv="ok" data-id="${e.id}">Xác nhận</button><button class="btn sm" data-rv="no" data-id="${e.id}">Bỏ qua</button>`}`;
-    return`<div class="al" data-id="${e.id}" style="--c:${col}"><img src="${e.img}" data-seek="${e.start}" alt="">
+      :`<button class="btn sm" data-seek="${eventStart(e)}">Xem lại</button>${(e.decision==='NORMAL'||e.provisional)?'':`<button class="btn sm" data-rv="ok" data-id="${e.id}">Xác nhận</button><button class="btn sm" data-rv="no" data-id="${e.id}">Bỏ qua</button>`}`;
+    return`<div class="al" data-id="${e.id}" style="--c:${col}"><img src="${e.img}" data-seek="${eventStart(e)}" alt="">
       <div><div class="hd"><span class="badge">${lab}</span><b>Visitor #${e.track}</b><span class="meta">→ ${esc(a.name)}</span></div>
-      <div class="meta">${fmt(e.start)}–${fmt(e.end)} · VLM tin cậy ${e.conf==null?'—':((e.conf*100)|0)+'%'}</div>
+      <div class="meta">${fmt(eventStart(e))}–${fmt(e.end)} · VLM tin cậy ${e.conf==null?'—':((e.conf*100)|0)+'%'}</div>
       <div class="why">“${esc(e.reason)}”</div><div class="acts">${btn}</div></div></div>`}).join('')}
 function renderTimeline(){const tl=$('#tl');tl.querySelectorAll('.seg').forEach(n=>n.remove());
-  listEvents().forEach(e=>{const d=document.createElement('div');d.className='seg';d.style.cssText=`left:${e.start/D*100}%;width:${(e.end-e.start)/D*100}%;background:${evColor(e)}`;d.title=`#${e.track} ${evLabel(e)}`;d.dataset.seek=e.start;tl.append(d)});
+  const seg=(e,from,to,col,label)=>{const d=document.createElement('div');d.className='seg';d.style.cssText=`left:${from/D*100}%;width:${(to-from)/D*100}%;background:${col}`;d.title=`#${e.track} ${label}`;d.dataset.seek=from;tl.append(d)};
+  listEvents().forEach(e=>{
+    if(e.onset!=null){const wait={...e,decision:'CANDIDATE',behavior:'uncertain'};seg(e,e.start,e.onset,evColor(wait),evLabel(wait))}
+    seg(e,eventStart(e),e.end,evColor(e),evLabel(e))});
   const o=DER.occ;if(DATA.real||!o.length||Math.max(...o)===0){$('#occ').innerHTML='';return}
   const m=Math.max(...o),pts=o.map((v,i)=>`${i/(o.length-1)*100},${100-v/m*70-4}`).join(' ');
   $('#occ').setAttribute('viewBox','0 0 100 100');$('#occ').innerHTML=`<polyline points="0,100 ${pts} 100,100" fill="rgba(25,35,43,.07)" stroke="rgba(25,35,43,.4)" stroke-width=".8" vector-effect="non-scaling-stroke"/>`}
@@ -287,7 +291,7 @@ function mapScene(t){
   if(done){
     if(!MAP.series){const frames=MAP.keys.map(k=>({t:k/MAP.fps,people:MAP.frames[k].map(q=>({id:q[0],x:q[1],y:q[2]}))}));
       MAP.series={frames,tracks:EFPlay.buildTracks(frames)}}
-    const events=DATA.events.filter(e=>e.decision==='ANOMALY').map(e=>({id:e.track,behavior:e.behavior,start:e.start}));
+    const events=DATA.events.filter(e=>e.decision==='ANOMALY').map(e=>({id:e.track,behavior:e.behavior,start:eventStart(e)}));
     return{frames:MAP.series.frames,tracks:MAP.series.tracks,events,t:S.videoURL?t:Infinity,live:false}}
   const frames=MAP.hist,last=frames[frames.length-1],live=!!LIVE||S.running;
   return{frames,tracks:EFPlay.buildTracks(frames),events:[...MAP.flagged.values()],t:live||!S.videoURL?(last?last.t:0):t,live}}

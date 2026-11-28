@@ -98,5 +98,20 @@
     return (frames || []).slice(0, lo);
   }
 
-  return { GAP, HOLD, buildTracks, posAt, trailUpTo, flaggedAt, sceneAt, framesUpTo };
+  /* Sự kiện bất thường của engine bắt đầu khi người ĐỨNG GẦN, còn lúc chạm thật (báo động) muộn hơn (alarm_start).
+   * Trả mốc báo động nếu nó muộn hơn đầu sự kiện, ngược lại null. */
+  function alarmOnset(event, alert) {
+    if (event.decision !== "ANOMALY") return null;
+    const span = (event.alarm_spans || [])[0];
+    const s = alert && alert.alarm_start_time_s != null ? alert.alarm_start_time_s : span ? span.start_time_s : null;
+    return s != null && s > event.start_time_s + 0.2 ? s : null;
+  }
+
+  /* sự kiện đang diễn ra tại t; trước mốc báo động thì sự kiện bất thường chỉ là "cần xác nhận" */
+  function activeEventsAt(events, t) {
+    return events.filter((e) => t >= e.start && t <= e.end)
+      .map((e) => (e.onset != null && t < e.onset ? { ...e, decision: "CANDIDATE", behavior: "uncertain", conf: null } : e));
+  }
+
+  return { GAP, HOLD, buildTracks, posAt, trailUpTo, flaggedAt, sceneAt, framesUpTo, alarmOnset, activeEventsAt };
 });
