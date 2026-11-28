@@ -52,3 +52,19 @@ def test_nothing_changes_without_room_bounds_or_second_camera():
     res = dict(C1=result(A, dict(left=4)), C2=result(B, dict(left=7)))
     assert am.match(res, dict(C1=A, C2=B), None) == {}
     assert am.match(dict(C1=res['C1']), dict(C1=A), ROOM) == {}
+
+
+def test_exhibit_positions_on_the_map():
+    res = dict(C1=result(A, dict(left=4, middle=7)), C2=result(B, dict(middle=5)))
+    specs = dict(C1=A, C2=B)
+    ids = am.match(res, specs, ROOM)
+    got = am.map_exhibits(res, specs, ids, ROOM, {})
+    assert [e['id'] for e in got] == [4, 7]
+    assert abs(got[1]['x']) < .05 and abs(got[1]['y'] - 5) < .05
+    shift = np.array([[1, 0, 10], [0, 1, 0], [0, 0, 1.0]])           # map lệch 10 m so với toạ độ sàn
+    ground = {c: np.array(s['K'], float) @ np.column_stack([np.array(s['R_world_to_camera'])[:, 0], np.array(s['R_world_to_camera'])[:, 1], s['t_world_to_camera']])
+              for c, s in specs.items()}
+    moved = am.map_exhibits(res, specs, ids, ROOM, {c: shift @ np.linalg.inv(g) for c, g in ground.items()})
+    assert abs(moved[1]['x'] - 10) < .05 and abs(moved[1]['y'] - 5) < .05
+    assert am.map_exhibits(res, specs, ids, None, {}) == [] and am.map_exhibits(res, specs, {}, ROOM, {}) == []
+

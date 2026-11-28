@@ -119,6 +119,13 @@
     </div>
   </section>
 
+  <section class="card exstats" id="exStats" hidden>
+    <h3>Thống kê dừng chân theo hiện vật <span class="sp"></span><button class="btn sm" id="exCsv" type="button">Xuất CSV</button></h3>
+    <div class="exwrap"><table><thead><tr><th>Hiện vật</th><th>Loại</th><th class="num">Khách dừng</th><th class="num">Tỉ lệ khách</th><th class="num">Tổng thời gian</th><th class="num">Trung bình/khách</th><th>Mức chú ý</th></tr></thead><tbody id="exRows"></tbody></table></div>
+    <p class="exnone" id="exNone"></p>
+    <p class="mpinfo" id="exNote"></p>
+  </section>
+
   <div class="grid2">
     <div class="card">
       <h3>Cảnh báo hành vi <span class="sp"></span>
@@ -172,6 +179,7 @@
 <script src="js/museum_analytics.js"></script>
 <script src="js/playback.js"></script>
 <script src="js/errors.js"></script>
+<script src="js/exhibits.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

@@ -1017,6 +1017,8 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                     results[cam] = json.loads((Path(rd) / 'result.json').read_text(encoding='utf-8'))
                     specs[cam] = site_events.fit_to_video(site['cameras'][cam], int(tl['width']), int(tl['height']))
             job['art_map'] = art_match.match(results, specs, site.get('room_bounds'))
+            hs = {c['id']: c.get('H') for c in result.get('cameras', [])}
+            result['exhibits'] = art_match.map_exhibits(results, specs, job['art_map'], site.get('room_bounds'), hs)   # cho bảng thống kê dừng chân
             for cam, ids in job['art_map'].items():
                 tls[cam] = art_match.renumber_timeline(tls[cam], ids)
         except Exception as e:                          # noqa: BLE001 - không ghép được: giữ số riêng của từng camera

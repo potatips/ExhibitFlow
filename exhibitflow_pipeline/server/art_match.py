@@ -100,3 +100,41 @@ def renumber_timeline(tl, ids):
     if not ids:
         return tl
     return dict(tl, alerts=[dict(a, artifact_id=ids.get(a.get('artifact_id'), a.get('artifact_id'))) for a in tl.get('alerts') or []])
+
+
+def map_exhibits(results, specs, art_map, room, camera_h):
+    """Vị trí các hiện vật trên map ghép [{id, label, pedestal, x, y}] để thống kê dừng chân (số hiện vật chung).
+    Điểm trên tường được hạ thẳng xuống sàn, chiếu vào ảnh của camera rồi đổi sang toạ độ map bằng ma trận chiếu của map
+    (camera_h = {cam: H ảnh->map}; thiếu thì toạ độ map chính là toạ độ sàn). Thiếu giới hạn phòng, hoặc nhiều camera mà
+    chưa ghép được số chung, thì trả []."""
+    if not room or not results or (len(results) > 1 and not art_map):
+        return []
+    found = {}
+    for cam, res in results.items():
+        spec = specs.get(cam)
+        if spec is None:
+            continue
+        points = camera_points(res, spec, room)
+        K, R, t = (np.asarray(spec[k], float) for k in ('K', 'R_world_to_camera', 't_world_to_camera'))
+        ground = K @ np.column_stack([R[:, 0], R[:, 1], t])          # (X, Y, 1) trên sàn -> điểm ảnh
+        H = camera_h.get(cam)
+        for a in res.get('artifacts') or []:
+            p = points.get(a['id'])
+            if p is None:
+                continue
+            xy = p[:2]
+            if H is not None:
+                q = np.asarray(H, float) @ (ground @ np.array([p[0], p[1], 1.0]))
+                if abs(q[2]) < 1e-9:
+                    continue
+                xy = q[:2] / q[2]
+            gid = (art_map.get(cam) or {}).get(a['id'], a['id'])
+            item = found.setdefault(gid, dict(id=gid, label=a.get('label') or '', pedestal=bool(a.get('pedestal')), points=[]))
+            item['points'].append(xy)
+    out = []
+    for gid in sorted(found):
+        item = found[gid]
+        x, y = np.mean(item.pop('points'), axis=0)
+        out.append(dict(item, x=round(float(x), 3), y=round(float(y), 3)))
+    return out
+
