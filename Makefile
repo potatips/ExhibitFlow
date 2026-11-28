@@ -38,7 +38,7 @@ export PYTORCH_CUDA_ALLOC_CONF := expandable_segments:True
 TRACKER_URL := https://github.com/khangkaka066/ByteTrack-DMA-LTC-Motion-Tracker.git
 MAP_URL     := https://github.com/potatips/multicam-2d-floorplan-tracker.git
 
-.PHONY: vast run setup deps externals weights llama mapmodels check url logs status stop restart clean help
+.PHONY: vast run wait setup deps externals weights llama mapmodels check url logs status stop restart clean help
 
 help:
 	@sed -n "2,8p" Makefile | sed "s/^# \{0,1\}//"
@@ -94,14 +94,18 @@ run: setup
 	  echo "[run] đã chạy nền (pid $$(cat $(PIDF))), mode=$(MODE), port=$(PORT). Log: $(LOG)"; \
 	  echo "[run] kết quả lưu ở: $(DATA)/runs/"; \
 	fi
-	@$(MAKE) --no-print-directory url
+	@$(MAKE) --no-print-directory wait && $(MAKE) --no-print-directory url
+
+# Đợi nạp xong model (thanh tiến trình theo bước nạp); chỉ khi xong mới in link. WAIT_TIMEOUT=giây (mặc định 3600)
+wait:
+	@$(PY) $(PIPE)/scripts/wait_ready.py --port $(PORT) --pid-file $(PIDF) --log $(LOG) --mode $(MODE) --timeout $(or $(WAIT_TIMEOUT),3600)
 
 url:
 	@ip="$${PUBLIC_IPADDR:-}"; ext="$${VAST_TCP_PORT_$(PORT):-}"; \
 	echo ""; \
 	if [ -n "$$ip" ] && [ -n "$$ext" ]; then echo ">>> Mở dashboard: http://$$ip:$$ext"; \
 	else echo ">>> Port $(PORT) chưa được mở ra ngoài. Trên Vast: thêm -p $(PORT):$(PORT) vào Docker options của template, rồi mở IP:port hiện trên trang Instances."; fi; \
-	echo "    Lần đầu nạp model mất vài phút (VLM ~6 GB). Theo dõi: make logs"
+	echo "    Model đã nạp xong. Log: make logs"
 
 logs:
 	@tail -n 80 -f $(LOG)
