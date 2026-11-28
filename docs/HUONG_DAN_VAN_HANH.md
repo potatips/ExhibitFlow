@@ -121,8 +121,8 @@ Bạn **không cần sửa hay deploy lại web trên Vercel**:
 2. *(Tuỳ chọn — để giữ lại toàn bộ job cũ, video đã upload, floorplan và cảnh báo đã duyệt)* Copy nguyên thư mục `DATA_DIR` (mặc định là `./backend_data/` chứa `state.db` và các artifact cục bộ) sang máy mới.
    - Nếu cấu hình bằng biến môi trường `REDIS_URL` hoặc `ARTIFACT_STORE=vercel_blob` + `BLOB_READ_WRITE_TOKEN`, chỉ cần giữ nguyên các biến môi trường đó trên máy mới.
 3. Chạy lại lệnh khởi động ở mục **2.2** trên máy mới (trỏ `--data-dir` / `DATA_DIR` vào thư mục vừa copy nếu khác mặc định):
-   - **Nếu dùng Quick Tunnel:** Máy mới tạo `Public HTTPS URL` mới → mở web Vercel → vào **Settings**, dán URL và `Backend Access Key` mới → bấm **Kết nối**.
-   - **Nếu dùng Named Tunnel:** Dùng lại đúng `CLOUDFLARE_TUNNEL_TOKEN`, `PUBLIC_BACKEND_URL` và `BACKEND_API_KEY` cũ → URL hoàn toàn không đổi, **không cần chỉnh lại Settings trên web**.
+   - **Nếu dùng Quick Tunnel:** Máy mới tạo `Public HTTPS URL` mới → mở web Vercel → vào **Cài đặt**, dán URL và `Backend Access Key` mới → bấm **Kết nối**.
+   - **Nếu dùng Named Tunnel:** Dùng lại đúng `CLOUDFLARE_TUNNEL_TOKEN`, `PUBLIC_BACKEND_URL` và `BACKEND_API_KEY` cũ → URL hoàn toàn không đổi, **không cần chỉnh lại Cài đặt trên web**.
    - **Về cấu hình GPU Worker:** Nếu đã copy `backend_data/state.db`, backend mới tự giữ nguyên URL và `X-GPU-Token` của GPU Worker; nếu chạy `DATA_DIR` trống, chỉ cần dán lại GPU Worker URL + `X-GPU-Token` ở bước 4.
 
 ---
@@ -180,19 +180,19 @@ Chỉ dùng để demo/chạy thử, **không** dùng làm worker ổn định l
 ## 4. Kết nối 3 tầng trên Web Vercel & Chạy Job
 
 1. Mở https://exhibitflow-ten.vercel.app trên trình duyệt.
-2. Chuyển sang tab **Settings**:
-   - **Khung 1 — Kết nối máy chủ Backend (CPU FastAPI):**
+2. Chuyển sang tab **Cài đặt**:
+   - **Khung 1 — Máy chủ Backend (CPU FastAPI):**
      - **Bỏ chọn** ô *Chạy trực tiếp trên máy chủ backend (cùng domain / origin)*.
-     - Nhập **URL backend** lấy ở Bước 2 (ví dụ `https://xxxx.trycloudflare.com` hoặc `https://api.yourdomain.com`).
+     - Nhập **URL máy chủ Backend** lấy ở Bước 2 (ví dụ `https://xxxx.trycloudflare.com` hoặc `https://api.yourdomain.com`).
      - Nhập **Mã truy cập Backend (API Key)** (`BACKEND_API_KEY`).
      - *(Tuỳ chọn)* Tick *Ghi nhớ mã truy cập sau khi đóng trình duyệt* nếu là máy cá nhân tin cậy (mặc định web chỉ lưu key trong `sessionStorage` của tab/phiên hiện tại).
      - Bấm **Kết nối**.
-   - **Khung 2 — Kết nối GPU Worker (Vast.ai / cloudflared):**
-     - Nhập **GPU Worker URL** lấy ở Bước 3.
-     - Nhập **X-GPU-Token**.
+   - **Khung 2 — GPU Worker (Vast.ai / cloudflared):**
+     - Nhập **Địa chỉ GPU Worker URL** lấy ở Bước 3.
+     - Nhập **Mã bảo mật `X-GPU-Token`**.
      - Bấm **Lưu & Kiểm tra**. *(Khoá này được gửi lên Backend để Backend uỷ quyền gọi sang GPU Worker, và không bị lưu hay phát lại trong mã frontend.)*
 3. Kiểm tra chip trạng thái góc trên giao diện: khi chuyển xanh **`Backend + GPU sẵn sàng`**, hệ thống đã kết nối thông suốt cả 3 tầng.
-4. Quay lại **Dashboard**:
+4. Quay lại tab **Tổng quan**:
    - Tải lên video (job đơn camera hoặc site job đa camera có hiệu chuẩn floorplan) và bấm phân tích.
    - Theo dõi trực tiếp luồng MJPEG, sự kiện, heatmap và cảnh báo.
 5. **Xem lại ngoại tuyến (Offline Replay):**
@@ -212,9 +212,9 @@ Chỉ dùng để demo/chạy thử, **không** dùng làm worker ổn định l
 
 | Triệu chứng trên Web / Terminal | Nguyên nhân | Cách khắc phục |
 |---|---|---|
-| Banner báo mất kết nối Backend / `ERR_CONNECTION` sau khi restart máy Backend | Dùng `--tunnel quick` nên URL `https://*.trycloudflare.com` đã đổi mới | Copy **Public HTTPS URL** mới trên terminal Backend → vào **Settings → Kết nối máy chủ Backend** dán lại và bấm **Kết nối** (hoặc chuyển sang `--tunnel named`). |
+| Banner báo mất kết nối Backend / `ERR_CONNECTION` sau khi restart máy Backend | Dùng `--tunnel quick` nên URL `https://*.trycloudflare.com` đã đổi mới | Copy **Public HTTPS URL** mới trên terminal Backend → vào **Cài đặt → Máy chủ Backend (CPU FastAPI)** dán lại và bấm **Kết nối** (hoặc chuyển sang `--tunnel named`). |
 | Web báo **CORS** / không kết nối được tới Backend từ Vercel | `CORS_ORIGINS` của Backend thiếu origin của trang Vercel | Khởi động lại Backend kèm `CORS_ORIGINS=https://exhibitflow-ten.vercel.app`. |
-| Lỗi **`401 Unauthorized`** khi kết nối Backend hoặc xem luồng | Thiếu/sai `BACKEND_API_KEY`, hoặc nhập nhầm `X-GPU-Token` vào ô API Key Backend | Copy đúng `Backend Access Key` từ terminal `backend/launch.py` dán vào ô **Mã truy cập Backend (API Key)**; `X-GPU-Token` chỉ nhập ở khung **Kết nối GPU Worker**. |
-| Chip báo **GPU ngoại tuyến** nhưng lịch sử cũ vẫn xem được | GPU Worker trên Vast.ai đã tắt, hết tiền/hết phiên, hoặc đổi URL Quick Tunnel | Kiểm tra terminal Vast.ai; nếu mới bật lại Vast.ai với Quick Tunnel, dán GPU Worker URL + `X-GPU-Token` mới vào **Settings → Lưu & Kiểm tra**. |
+| Lỗi **`401 Unauthorized`** khi kết nối Backend hoặc xem luồng | Thiếu/sai `BACKEND_API_KEY`, hoặc nhập nhầm `X-GPU-Token` vào ô API Key Backend | Copy đúng `Backend Access Key` từ terminal `backend/launch.py` dán vào ô **Mã truy cập Backend (API Key)**; `X-GPU-Token` chỉ nhập ở khung **GPU Worker (Vast.ai / cloudflared)**. |
+| Chip báo **GPU ngoại tuyến** nhưng lịch sử cũ vẫn xem được | GPU Worker trên Vast.ai đã tắt, hết tiền/hết phiên, hoặc đổi URL Quick Tunnel | Kiểm tra terminal Vast.ai; nếu mới bật lại Vast.ai với Quick Tunnel, dán GPU Worker URL + `X-GPU-Token` mới vào **Cài đặt → Lưu & Kiểm tra**. |
 | Tiến độ chạy mượt nhưng SSE báo ngắt/trễ qua `trycloudflare.com` | Cloudflare Quick Tunnel giới hạn kết nối SSE kéo dài (`ReadTimeout`) | Bình thường: giao diện tự động fallback sang polling 5 giây (`sseFallbackPolling`) và MJPEG vẫn hoạt động; nếu cần SSE push chuẩn, hãy dùng **Named Tunnel**. |
 | `llama-server` / VLM lỗi thiếu VRAM trên Vast.ai | GPU dưới 16 GB VRAM khi chạy `MODE=full` | Thuê GPU ≥ 16–24 GB VRAM hoặc chạy `MODE=tracking_seg bash start_vast.sh`. |
