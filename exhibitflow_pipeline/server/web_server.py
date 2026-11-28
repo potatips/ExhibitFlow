@@ -67,6 +67,7 @@ import site_events  # noqa: E402
 import site_fusion  # noqa: E402
 import site_parallel  # noqa: E402
 import site_runner  # noqa: E402
+import still_gate  # noqa: E402
 
 ALLOWED = {'.mp4', '.avi', '.mov', '.mkv', '.webm'}
 
@@ -305,6 +306,17 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
             return None
         j['rdir'] = max(found, key=lambda p: p.stat().st_mtime).parent
         return j['rdir']
+
+    def gated_result(j, rd):
+        """result.json đã áp quy tắc đứng yên (still_gate.py) bằng timeline.json của cùng lượt chạy."""
+        res = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+        try:
+            runs = sorted(((j.get('root') or state.root) / 'runs').glob(f'*_{rd.name}/timeline.json'), key=lambda p: p.stat().st_mtime)
+            if runs:
+                res = still_gate.apply(res, json.loads(runs[-1].read_text(encoding='utf-8')))[0]
+        except Exception as e:                                 # noqa: BLE001 - lỗi hậu xử lý: giữ kết quả gốc
+            state.log(f'Không áp được quy tắc đứng yên: {e}')
+        return res
 
     def finished(j):
         """Job đã có kết quả cuối (trạng thái chốt, không đổi nữa)."""
@@ -644,7 +656,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
             rd = result_dir(j) if (j is not None and c['status'] == 'done') else None
             if rd is not None and (rd / 'result.json').is_file():
                 out.append(dict(idx=c['idx'], name=c['name'], job_id=c['job_id'], key=rd.name,
-                                result=json.loads((rd / 'result.json').read_text(encoding='utf-8'))))
+                                result=gated_result(j, rd)))
         return out
 
     @app.post('/api/multi-jobs/{mid}/finish')
@@ -820,7 +832,7 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
             raise HTTPException(409, 'Job chưa xong')
         rd = result_dir(j)
         if rd is not None and (rd / 'result.json').is_file():
-            return FileResponse(rd / 'result.json', media_type='application/json')
+            return gated_result(j, rd)
         return synth_result(j)
 
     @app.get('/api/jobs/{jid}/video')
@@ -958,13 +970,24 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                 job.setdefault('live', {})[cam] = tl['_live']
             if tl.get('_result_dir'):
                 job.setdefault('result_dirs', {})[cam] = tl['_result_dir']
+        # "chạm" chỉ tính từ lúc người đó đứng lại: đoạn còn đang đi là "cần xác nhận" (xem still_gate.py), trước khi đối chiếu chéo
+        gated = {}
+        for cam, tl in list(tls.items()):
+            rd = (job.get('result_dirs') or {}).get(cam)
+            if rd and (Path(rd) / 'result.json').is_file():
+                try:
+                    gated[cam], tls[cam] = still_gate.apply(json.loads((Path(rd) / 'result.json').read_text(encoding='utf-8')), tl)
+                    job.setdefault('fused', {})[cam] = gated[cam]
+                except Exception as e:                  # noqa: BLE001 - lỗi hậu xử lý: giữ kết quả gốc
+                    job['log'].append(f'[events] {cam}: không áp được quy tắc đứng yên: {e}')
         # đối chiếu chéo: cùng một người (ID chung) ở cùng thời điểm phải có kết luận khớp nhau giữa các camera
         fx = {}
         try:
             for cam, tl in tls.items():
                 rd = (job.get('result_dirs') or {}).get(cam)
                 if rd and (Path(rd) / 'result.json').is_file():
-                    fx[cam] = dict(tl=tl, res=json.loads((Path(rd) / 'result.json').read_text(encoding='utf-8')), id_map=id_maps.get(cam) or {})
+                    fx[cam] = dict(tl=tls[cam], res=gated.get(cam) or json.loads((Path(rd) / 'result.json').read_text(encoding='utf-8')),
+                                   id_map=id_maps.get(cam) or {})
             if len(fx) > 1:
                 fused, info = site_fusion.fuse(fx)
                 result['fusion'] = info
