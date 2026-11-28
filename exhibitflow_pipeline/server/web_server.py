@@ -968,6 +968,14 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
                 for cam, v in fused.items():
                     job.setdefault('fused', {})[cam] = v['res']
                     tls[cam] = site_fusion.add_promoted_alerts(site_fusion.drop_demoted_alerts(tls[cam], v['drop']), v.get('add'))
+                    lv = (job.get('live') or {}).get(cam)
+                    if v.get('add') and lv:                      # video do engine vẽ trước đối chiếu: vẽ thêm khung đỏ cho người bị lan truyền
+                        try:
+                            import site_live
+                            if site_live.paint_promoted(lv, tls[cam], v['add'], id_maps.get(cam) or {}):
+                                job['log'].append(f'[events] {cam}: đã vẽ khung đỏ cho {len(v["add"])} sự kiện lan truyền vào live.mp4')
+                        except Exception as e:                      # noqa: BLE001 - lỗi vẽ video không làm hỏng kết quả
+                            job['log'].append(f'[events] {cam}: không vẽ được khung đỏ vào video ({type(e).__name__}: {e})')
                 n_dem = sum(1 for e in info['events'] if e['status'] == 'conflict')
                 job['log'].append(f'[events] đối chiếu chéo camera ({info["policy"]}): người bất thường {info.get("anomaly_persons") or []}, '
                                   f'{len(info.get("propagated") or [])} sự kiện được lan sang camera khác, {n_dem} bị hạ xuống "cần xem lại"')

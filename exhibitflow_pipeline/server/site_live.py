@@ -82,3 +82,57 @@ def setup(args, cam):
         return orig_put(img, text, *a, **k)
 
     eng_mod.put_label = put_label
+
+
+def paint_promoted(live, tl, add, id_map=None, pad_frames=0):
+    """Vẽ lại khung ĐỎ + nhãn "ID n | TOUCHING" lên live.mp4 cho người bị lan truyền từ camera khác.
+
+    live.mp4 do engine vẽ trước khi đối chiếu chéo nên không có khung đỏ cho người này; ở đây vẽ đè lên đúng các khung của
+    cảnh báo được lan sang (`add` = site_fusion.fuse()[..]['add']), dùng hộp trong timeline (toạ độ 0-1). Trả True nếu đã ghi lại video.
+    Lỗi ở bất kỳ bước nào giữ nguyên video cũ."""
+    import cv2
+    live = Path(live)
+    if not add or not live.is_file():
+        return False
+    spans = []
+    for a in add:
+        for s, e in a.get('spans') or [[a['start'], a['end']]]:
+            spans.append((int(a['tid']), int(s) - pad_frames, int(e) + pad_frames, str(a.get('behavior') or 'touching').upper()))
+    frames = tl.get('frames') or {}
+    tmp = live.with_name(live.stem + '.fused_tmp.mp4')
+    cap = cv2.VideoCapture(str(live))
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS) or float(tl.get('fps') or 25.0)
+        W, H = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        out = cv2.VideoWriter(str(tmp), cv2.VideoWriter_fourcc(*'mp4v'), fps, (W, H))
+        if not out.isOpened():
+            return False
+        red, n = (0, 0, 255), 0
+        while True:
+            ok, img = cap.read()
+            if not ok:
+                break
+            for b in (frames.get(str(n)) or [[]])[0]:
+                tid = int(b[0])
+                hit = next((s for s in spans if s[0] == tid and s[1] <= n <= s[2]), None)
+                if hit is None:
+                    continue
+                x1, y1, x2, y2 = int(b[1] * W), int(b[2] * H), int(b[3] * W), int(b[4] * H)
+                cv2.rectangle(img, (x1, y1), (x2, y2), red, 3)
+                gid = (id_map or {}).get(tid, tid)
+                txt = f'ID {gid} | {hit[3]}'
+                (tw, th), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                top = max(0, y1 - th - 8)
+                cv2.rectangle(img, (x1, top), (x1 + tw + 8, top + th + 8), (0, 0, 0), -1)
+                cv2.putText(img, txt, (x1 + 4, top + th + 3), cv2.FONT_HERSHEY_SIMPLEX, 0.5, red, 1, cv2.LINE_AA)
+            out.write(img)
+            n += 1
+        out.release()
+    finally:
+        cap.release()
+    if n == 0:
+        tmp.unlink(missing_ok=True)
+        return False
+    from exhibitflow.common import encode_browser_mp4
+    encode_browser_mp4(tmp, live)                              # tmp -> live (H.264 nếu có ffmpeg; lỗi thì giữ mp4v)
+    return True
