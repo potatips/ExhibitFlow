@@ -201,7 +201,7 @@ const noisyLog=l=>/\d+%\||it\/s|s\/it|^Fetching \d+ files|\[\d+:\d+<|[█▏▎�
 function stageLine(j,seen){const n=(j.stages||[]).length,i=j.stage;if(j.status==='running'&&n&&i>=0&&i<n&&!seen.has('s'+i)){seen.add('s'+i);logLine(`[${i+1}/${n}] ${j.stages[i]}`)}}
 function logLine(m,bad){const el=$('#srcmsg');el.textContent=m;el.className='srcmsg'+(bad||/^(Chưa|Camera chưa)/.test(m)?' err':'')}
 function setStatus(t){$('#vstat').textContent=t}
-function setBusy(b){S.running=b;$('#modeSel').classList.toggle('lock',b);$('#runBtn').disabled=b;$('#stopBtn').disabled=!b;$('#uploadBtn').disabled=b;$('#src').disabled=b;$('#camSel').disabled=b;$('#camUrl').disabled=b;if(b)$('#runBtn').textContent='Đang chạy…';else applySourceUI()}
+function setBusy(b){S.running=b;$('#modeSel').classList.toggle('lock',b);$('#runBtn').disabled=b;$('#stopBtn').disabled=!b;$('#uploadBtn').disabled=b;$('#src').disabled=b;$('#camSel').disabled=b;$('#camUrl').disabled=b;if(b)$('#runBtn').textContent='Đang chạy…';else applySourceUI();renderCalBox()}
 
 /* ---------- System status ---------- */
 let SYS=null;const sim={cpu:6,ram:2.4,gpu:0,vram:.3};
@@ -1023,12 +1023,15 @@ const calOn=()=>!!S.cal.all||Object.keys(S.cal.per).length>0;
 function renderCalBox(){const box=$('#calBox'),preset=!!$('#siteSel').value;
   const show=S.mode==='batch'&&S.files.length>=1;box.hidden=!show;if(!show)return;
   $('#calRows').hidden=preset;$('#calAllRow').hidden=preset;
-  $('#calRows').innerHTML=S.files.map((f,i)=>`<div class="calrow"><span title="${esc(f.name)}">CAM ${i+1} · ${esc(f.name)}</span><input type="file" accept=".json,application/json" data-cal="${i}" hidden><button class="btn sm" type="button" data-calbtn="${i}">Chọn hiệu chuẩn</button><em class="${S.cal.per[i]?'ok':''}">${S.cal.per[i]?esc(S.cal.per[i].name):'chưa chọn'}</em></div>`).join('');
-  const a=$('#calAllName');a.textContent=S.cal.all?S.cal.all.name:'chưa chọn';a.className=S.cal.all?'ok':''}
-$('#calRows').onclick=e=>{const b=e.target.closest('[data-calbtn]');if(b)$(`#calRows [data-cal="${b.dataset.calbtn}"]`).click()};
+  $('#calRows').innerHTML=S.files.map((f,i)=>`<div class="calrow"><span title="${esc(f.name)}">CAM ${i+1} · ${esc(f.name)}</span><input type="file" accept=".json,application/json" data-cal="${i}" hidden><button class="btn sm" type="button" data-calbtn="${i}">Chọn hiệu chuẩn</button><em class="${S.cal.per[i]?'ok':''}">${S.cal.per[i]?esc(S.cal.per[i].name):'chưa chọn'}</em>${S.cal.per[i]?`<button class="calx" type="button" data-calclr="${i}" title="Xóa hiệu chuẩn CAM ${i+1}" aria-label="Xóa hiệu chuẩn CAM ${i+1}">×</button>`:''}</div>`).join('');
+  const a=$('#calAllName');a.textContent=S.cal.all?S.cal.all.name:'chưa chọn';a.className=S.cal.all?'ok':'';
+  $('#calAllClr').hidden=!S.cal.all;box.querySelectorAll('button').forEach(b=>b.disabled=!!S.running)}      // đang phân tích: khóa các nút
+$('#calRows').onclick=e=>{const x=e.target.closest('[data-calclr]');if(x){delete S.cal.per[x.dataset.calclr];renderCalBox();return}
+  const b=e.target.closest('[data-calbtn]');if(b)$(`#calRows [data-cal="${b.dataset.calbtn}"]`).click()};
 $('#calRows').onchange=e=>{const i=e.target.dataset.cal;if(i==null)return;if(e.target.files[0])S.cal.per[i]=e.target.files[0];else delete S.cal.per[i];renderCalBox()};
 $('#calAllBtn').onclick=()=>$('#calAll').click();
 $('#calAll').onchange=e=>{S.cal.all=e.target.files[0]||null;renderCalBox()};
+$('#calAllClr').onclick=()=>{S.cal.all=null;$('#calAll').value='';renderCalBox()};   // xóa value để chọn lại đúng file đó vẫn nhận
 
 /* ---------- Tab dưới map: hành vi | heatmap | cổ chai | luồng đi | vùng chết ---------- */
 const _hm=$('#heatModes');if(_hm)_hm.onclick=e=>{const b=e.target.closest('[data-hm]');if(!b)return;S.heatMode=b.dataset.hm;$$('#heatModes .tg').forEach(x=>x.classList.toggle('on',x===b))};

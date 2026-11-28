@@ -476,6 +476,10 @@ html,body{color:var(--text)}
 .calrow>span{flex:0 1 46%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .calrow em{font-style:normal;color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .calrow em.ok{color:var(--ok)}
+.calx{flex:none;width:24px;height:24px;display:inline-grid;place-items:center;padding:0;border:1px solid var(--line);border-radius:4px;background:transparent;color:var(--muted);font-size:16px;line-height:1;cursor:pointer}
+.calx:hover:not(:disabled){color:#C62828;border-color:#C62828}
+.calx:disabled{opacity:.45;cursor:default}
+.calx[hidden]{display:none}
 .calchk{display:flex;gap:8px;align-items:center;margin-top:8px;color:var(--muted);cursor:pointer}
 .mapfoot{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
 .mapfoot .vstat{margin-left:auto}
