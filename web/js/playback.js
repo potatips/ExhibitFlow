@@ -113,5 +113,22 @@
       .map((e) => (e.onset != null && t < e.onset ? { ...e, decision: "CANDIDATE", behavior: "uncertain", conf: null } : e));
   }
 
-  return { GAP, HOLD, buildTracks, posAt, trailUpTo, flaggedAt, sceneAt, framesUpTo, alarmOnset, activeEventsAt };
+  /* Số hiện vật được đánh RIÊNG theo từng camera, nên khi có nhiều camera luôn ghi kèm camera (cam = "CAM 1"). */
+  const hasId = (id) => id !== null && id !== undefined && id !== "?";
+  const camTail = (cam) => (cam ? ` (${cam})` : "");
+
+  /* "Chạm hiện vật" -> "Chạm hiện vật #7 (CAM 1)"; "Cầm / nhấc" -> "Cầm / nhấc hiện vật #7" */
+  function actionText(label, id, cam) {
+    if (!hasId(id)) return label;
+    return `${label}${/hiện vật$/i.test(label) ? "" : " hiện vật"} #${id}${camTail(cam)}`;
+  }
+
+  /* "Hiện vật #7 (CAM 1) · tên loại" (bỏ tên nếu tên chỉ là "Hiện vật 7") */
+  function artText(id, name, cam) {
+    if (!hasId(id)) return name || "";
+    const extra = name && !/^hiện vật\s*#?\d*$/i.test(name) ? ` · ${name}` : "";
+    return `Hiện vật #${id}${camTail(cam)}${extra}`;
+  }
+
+  return { GAP, HOLD, buildTracks, posAt, trailUpTo, flaggedAt, sceneAt, framesUpTo, alarmOnset, activeEventsAt, actionText, artText };
 });

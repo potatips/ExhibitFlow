@@ -68,3 +68,12 @@ test("an anomaly is only 'cần xác nhận' until the real contact starts", () 
   assert.strictEqual(events[0].decision, "ANOMALY");
 });
 
+test("alerts name the exhibit number, with the camera when there are several", () => {
+  assert.strictEqual(P.actionText("Chạm hiện vật", 7, "CAM 1"), "Chạm hiện vật #7 (CAM 1)");
+  assert.strictEqual(P.actionText("Cầm / nhấc", 4, ""), "Cầm / nhấc hiện vật #4");
+  assert.strictEqual(P.actionText("Chạm hiện vật", "?", "CAM 1"), "Chạm hiện vật");
+  assert.strictEqual(P.artText(7, "picture frame", "CAM 2"), "Hiện vật #7 (CAM 2) · picture frame");
+  assert.strictEqual(P.artText(3, "Hiện vật 3", ""), "Hiện vật #3");
+  assert.strictEqual(P.artText(null, "tên", ""), "tên");
+});
+
