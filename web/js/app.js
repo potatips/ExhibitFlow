@@ -507,10 +507,31 @@ function updateChipAndBanner(health){
       msg.textContent='đang hoạt động ✓'+(gpu.demo?' (demo)':gpu.busy?' (bận)':'')+(gpu.url?' · '+gpu.url:'');
       msg.style.color='var(--ok)';
     }else{
-      msg.textContent='ngoại tuyến ✗'+(gpu.error?' ('+gpu.error+')':'');
+      const errTxt=formatGpuError(gpu.error);
+      msg.textContent='ngoại tuyến ✗'+(errTxt?' ('+errTxt+')':'');
       msg.style.color='var(--warn)';
     }
   }
+}
+
+function formatGpuError(raw){
+  if(!raw)return '';
+  const s=String(raw).trim();
+  if(!s)return '';
+  const low=s.toLowerCase();
+  if(low.startsWith('<!doctype')||low.startsWith('<html')||/<html[\s>]/i.test(s.slice(0,512))){
+    const cfCode=(s.match(/errorCode:\s*(\d+)/i)||s.match(/<span[^>]*>\s*Error\s*<\/span>\s*<span[^>]*>\s*(\d+)\s*<\/span>/i)||[])[1];
+    if(cfCode||/cloudflare tunnel/i.test(s)){
+      return cfCode
+        ?`Cloudflare Tunnel ngắt kết nối (Error ${cfCode} — GPU Worker offline hoặc URL tunnel cũ)`
+        :'Cloudflare Tunnel lỗi kết nối tới GPU Worker';
+    }
+    const titleMatch=s.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const title=titleMatch?titleMatch[1].replace(/\s+/g,' ').trim():'';
+    return title?title.slice(0,140):'GPU Worker trả về trang lỗi HTML';
+  }
+  const clean=s.replace(/\s+/g,' ').trim();
+  return clean.length>220?clean.slice(0,217)+'...':clean;
 }
 
 async function loadGpuConfig(){

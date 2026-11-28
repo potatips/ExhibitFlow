@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.config import Settings
-from backend.app.gpu_client import compute_gpu_ready
+from backend.app.gpu_client import _extract_error, compute_gpu_ready
 from backend.app.main import create_app
 
 
@@ -354,3 +354,29 @@ def test_cors_preflight_for_vercel_origin(tmp_path: Path) -> None:
         expose_hdrs = (actual.headers.get("access-control-expose-headers") or "").lower()
         assert "content-range" in expose_hdrs
         assert "content-disposition" in expose_hdrs
+
+
+def test_extract_error_summarizes_cloudflare_and_html() -> None:
+    cf_html = (
+        "<!doctype html><html><head><title>Cloudflare Tunnel error | example.trycloudflare.com</title>"
+        "<script>a={properties:{errorCode: 1033}};</script></head>"
+        "<body><span>Error</span> <span>1033</span> Cloudflare Tunnel error</body></html>"
+    )
+    resp_cf = httpx.Response(530, text=cf_html, headers={"content-type": "text/html; charset=UTF-8"})
+    err_cf = _extract_error(resp_cf)
+    assert "<html" not in err_cf.lower()
+    assert "<!doctype" not in err_cf.lower()
+    assert "1033" in err_cf
+    assert "Cloudflare Tunnel" in err_cf
+
+    resp_502 = httpx.Response(
+        502,
+        text="<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>",
+        headers={"content-type": "text/html"},
+    )
+    err_502 = _extract_error(resp_502)
+    assert "502" in err_502
+    assert "<html" not in err_502.lower()
+
+    resp_json = httpx.Response(400, json={"detail": "Sai cấu hình"})
+    assert _extract_error(resp_json) == "Sai cấu hình"

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -42,6 +44,50 @@ def compute_gpu_ready(health: dict[str, Any]) -> bool:
     )
 
 
+_CF_ERR_CODE_RE = re.compile(
+    r"errorCode:\s*(\d+)|<span[^>]*>\s*Error\s*</span>\s*<span[^>]*>\s*(\d+)\s*</span>",
+    re.IGNORECASE,
+)
+_HTML_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+
+
+def _summarize_error_body(raw: str, status_code: int, content_type: str = "") -> str:
+    text = (raw or "").strip()
+    if not text:
+        return f"HTTP {status_code}"
+    low_head = text[:512].lower()
+    is_html = (
+        "text/html" in content_type.lower()
+        or low_head.startswith(("<!doctype", "<html"))
+        or "<html" in low_head
+        or "<head>" in low_head
+    )
+    if is_html:
+        cf_match = _CF_ERR_CODE_RE.search(text)
+        if cf_match or "cloudflare tunnel" in text.lower():
+            code = next((g for g in (cf_match.groups() if cf_match else ()) if g), None)
+            if code:
+                return f"Cloudflare Tunnel ngắt kết nối (Error {code} — GPU Worker offline hoặc URL tunnel cũ)"
+            return f"Cloudflare Tunnel lỗi kết nối tới GPU Worker (HTTP {status_code})"
+        status_hints = {
+            502: "Bad Gateway (HTTP 502 — GPU Worker chưa sẵn sàng hoặc tunnel ngắt)",
+            503: "Service Unavailable (HTTP 503 — GPU Worker không khả dụng)",
+            504: "Gateway Timeout (HTTP 504 — GPU Worker phản hồi quá chậm)",
+            401: "Lỗi xác thực X-GPU-Token (HTTP 401)",
+            403: "Truy cập bị từ chối (HTTP 403)",
+        }
+        if status_code in status_hints:
+            return status_hints[status_code]
+        t_match = _HTML_TITLE_RE.search(text)
+        title = re.sub(r"\s+", " ", html.unescape(t_match.group(1))).strip() if t_match else ""
+        if title:
+            title = title[:120]
+            return f"HTTP {status_code}: {title}"
+        return f"HTTP {status_code}"
+    clean = re.sub(r"\s+", " ", text)
+    return clean if len(clean) <= 240 else clean[:237] + "..."
+
+
 def _extract_error(resp: httpx.Response) -> str:
     try:
         data = resp.json()
@@ -49,7 +95,8 @@ def _extract_error(resp: httpx.Response) -> str:
             return str(data["detail"])
         return json.dumps(data, ensure_ascii=False)
     except Exception:  # noqa: BLE001
-        return resp.text or f"HTTP {resp.status_code}"
+        ctype = str(resp.headers.get("content-type") or "")
+        return _summarize_error_body(resp.text or "", resp.status_code, ctype)
 
 
 class GPUClient:
