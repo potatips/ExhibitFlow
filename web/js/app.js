@@ -355,7 +355,7 @@ let _panelsAt=0;
 function drawMapPanels(t){
   const now=performance.now();if(now-_panelsAt<100)return;_panelsAt=now;
   const keep={tab:S.mapTab,shown:MAP.shown,unit:MAP.unit};
-  for(const[tab,cid,iid]of MAP_PANELS){const c=$('#'+cid);if(!c||!c.clientWidth)continue;S.mapTab=tab;_infoId=iid;drawMapPanel(t,c)}
+  for(const[tab,cid,iid]of MAP_PANELS){const c=$('#'+cid);if(!c||!c.clientWidth)continue;S.mapTab=tab==='heat'&&S.heatMode==='deadzone'?'deadzone':tab;_infoId=iid;drawMapPanel(t,c)}
   S.mapTab=keep.tab;_infoId='mapInfo';MAP.shown=keep.shown;MAP.unit=keep.unit}
 
 /* ---------- Phát lại ---------- */
@@ -836,7 +836,7 @@ function drawOverlayLayer(x,w,h,tab,an,heat,toX,toY,drawGridCanvas,isMetric){
 }
 
 function drawSiteOverlay(B,tab,T){
-  const {x,w,h,X,Y,ox,oy,sc,D_}=B,cur=siteHeatAt(T),H=cur.heat,[x0,y0]=H.bounds||D_.bounds,[vx0,vy0,vx1,vy1]=D_.view||D_.bounds;
+  const {x,w,h,X,Y,ox,oy,sc,D_}=B,cur=siteHeatAt(tab==='deadzone'?Infinity:T),H=cur.heat,[x0,y0]=H.bounds||D_.bounds,[vx0,vy0,vx1,vy1]=D_.view||D_.bounds;
   const drawGrid=cv=>{x.save();x.beginPath();x.roundRect(ox,oy,(vx1-vx0)*sc,(vy1-vy0)*sc,6);x.clip();x.imageSmoothingEnabled=true;
     x.drawImage(cv,X(x0),Y(y0+H.ny*H.cell),H.nx*H.cell*sc,H.ny*H.cell*sc);x.restore()};
   drawOverlayLayer(x,w,h,tab,cur.an,H,X,Y,drawGrid,true);
@@ -844,7 +844,7 @@ function drawSiteOverlay(B,tab,T){
 
 function drawRealOverlay(c,tab,t){
   const {x,w,h}=fit(c),im=MAP.img;
-  const cur=realHeatAt(t);
+  const cur=realHeatAt(tab==='deadzone'&&!LIVE&&MAP.keys&&MAP.keys.length?Infinity:t);
   if(!cur){x.fillStyle='rgba(8,11,14,.6)';x.fillRect(0,0,w,h);x.fillStyle='#94A0AC';x.font='13px Segoe UI';x.textAlign='center';
     x.fillText('Đang chờ vị trí người đầu tiên…',w/2,h/2);setMapInfo('');return}
   const pad=10,s=Math.min((w-pad*2)/im.naturalWidth,(h-pad*2)/im.naturalHeight),iw=im.naturalWidth*s,ih=im.naturalHeight*s,ox=(w-iw)/2,oy=(h-ih)/2;
