@@ -1018,11 +1018,11 @@ document.addEventListener('keydown',e=>{if(e.code==='Space'&&!$('#v-dash').hidde
 
 /* ---------- Settings: ngưỡng phát hiện người (gửi lên server) ---------- */
 function showDetConf(o){const el=$('#detConf');if(!el||o==null)return;const eff=typeof o==='object'?o.det_conf_effective:o,def=typeof o==='object'?o.det_conf_default:null;
-  if(eff==null)return;el.value=eff;$('#detN').value=(+eff).toFixed(3);$('#detV').textContent=(def!=null&&Math.abs(eff-def)<1e-9)?'(mặc định)':''}
+  if(eff==null)return;el.value=eff;$('#detN').value=(+eff).toFixed(2);$('#detV').textContent=(def!=null&&Math.abs(eff-def)<1e-9)?'(mặc định)':''}
 async function postDetConf(v){const r=await(await API.f('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({det_conf:v})})).json();showDetConf(r);return r}
 let detTimer=0;
 bindNum($('#detConf'),$('#detN'),v=>{$('#detV').textContent='';clearTimeout(detTimer);
-  detTimer=setTimeout(async()=>{try{await postDetConf(v);logLine('Ngưỡng phát hiện người = '+v.toFixed(3))}catch(err){logLine('Không đặt được ngưỡng: '+err.message)}},400)},3);
+  detTimer=setTimeout(async()=>{try{await postDetConf(v);logLine('Ngưỡng phát hiện người = '+v.toFixed(2))}catch(err){logLine('Không đặt được ngưỡng: '+err.message)}},400)},2);
 $('#detReset').onclick=async()=>{try{await postDetConf(null);logLine('Ngưỡng phát hiện người về mặc định của engine.')}catch(err){logLine('Không đặt được ngưỡng: '+err.message)}};
 
 /* ---------- Settings: kết nối, nhập kết quả ---------- */
@@ -1037,7 +1037,7 @@ $('#beOff').onclick=async()=>{API.base='';$('#beUrl').value='';try{localStorage.
 function bindNum(sl,num,onSet,dec){const clamp=v=>Math.min(+sl.max,Math.max(+sl.min,v));
   sl.addEventListener('input',()=>{num.value=(+sl.value).toFixed(dec);onSet(+sl.value)});
   const commit=()=>{const v=parseFloat(String(num.value).replace(',','.'));if(!isFinite(v)){num.value=(+sl.value).toFixed(dec);return}
-    const c=clamp(v);sl.value=c;num.value=c.toFixed(dec);onSet(c)};
+    const c=clamp(Math.round(v*100)/100);sl.value=c;num.value=c.toFixed(dec);onSet(c)};
   num.addEventListener('change',commit);num.addEventListener('keydown',e=>{if(e.key==='Enter'){commit();num.blur()}})}
 bindNum($('#conf'),$('#confN'),()=>{},2);
 
