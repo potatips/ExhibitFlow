@@ -135,3 +135,9 @@ def test_person_policy_trims_the_end_when_the_touch_is_first():
     assert got == [('ANOMALY', 2.0, 4.0), ('CANDIDATE', 4.0, 9.0)], got
     assert len({e['event_id'] for e in f['A']['res']['events']}) == 2
 
+
+def test_web_clip_window_defaults_and_env():
+    import site_live
+    assert site_live.clip_window({}) == (1.0, 8.0)
+    assert site_live.clip_window({'EXHIBITFLOW_POST_SEC': '3', 'EXHIBITFLOW_MAX_WINDOW_SEC': '10'}) == (3.0, 10.0)
+
