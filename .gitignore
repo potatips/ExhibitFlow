@@ -40,3 +40,11 @@ pretrained
 !external/
 external/*
 !external/.gitkeep
+
+# Backend & GPU runtime data
+backend_data/
+gpu_data/
+GPU_server/work/
+*.db
+*.db-wal
+*.db-shm

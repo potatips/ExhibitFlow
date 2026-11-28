@@ -3,135 +3,314 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ExhibitFlow Dashboard</title>
+<title>ExhibitFlow — Giám sát &amp; Phân tích Triển lãm</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
 <link rel="stylesheet" href="css/style.css">
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@800;900&display=swap">
 <link rel="stylesheet" href="css/theme-light.css">
 </head>
 <body>
-<canvas id="hexbg" aria-hidden="true"></canvas>
 <div class="app">
 <div class="scrim" id="scrim" hidden></div>
-<aside class="side" id="side">
-  <div class="brand"><i>EF</i><b>ExhibitFlow</b><small>Museum AI · v1.0</small></div>
+
+<aside class="side" id="side" aria-label="Điều hướng chính">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 28 28" fill="none">
+        <rect x="2" y="2" width="24" height="24" rx="5" stroke="currentColor" stroke-width="1.8"/>
+        <path d="M8 9h12M8 14h8M8 19h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        <circle cx="19.5" cy="18.5" r="3" fill="var(--accent)"/>
+      </svg>
+    </span>
+    <div class="brand-text">
+      <b>ExhibitFlow</b>
+      <small>Quản trị phòng trưng bày</small>
+    </div>
+  </div>
+
   <nav class="tabs" id="tabs">
-    <button class="tab on" data-view="dash"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>Dashboard</span></button>
-    <button class="tab" data-view="set"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Settings</span></button>
+    <button type="button" class="tab on" data-view="dash">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/></svg>
+      <span>Tổng quan</span>
+    </button>
+    <button type="button" class="tab" data-view="set">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      <span>Cài đặt</span>
+    </button>
   </nav>
+
   <div class="side-foot">
-    <p class="fl">ExhibitFlow Pipeline</p>
-    <p>Hệ thống không lưu danh tính và không nhận diện khuôn mặt.</p>
+    <p class="fl">Quyền riêng tư bảo tàng</p>
+    <p>Hệ thống chỉ phân tích quỹ đạo ẩn danh, không nhận diện khuôn mặt và không lưu danh tính cá nhân.</p>
   </div>
 </aside>
+
 <div class="content">
 <header class="top">
-  <button class="menubtn" id="menuBtn" aria-label="Mở menu" aria-expanded="false" aria-controls="side" title="Menu"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="M9.5 4.5v15"/></svg></button>
-  <h1 class="wm"><span class="wm-main">ExhibitFlow</span><span class="wm-sub">Dashboard</span></h1>
-  <div class="sp"></div>
-  <button class="chip bad" id="beChip" title="Mở Settings để kết nối backend"><b></b><span>Mất kết nối</span></button>
-  <span class="chip clock" id="clock"></span>
-  <button class="btn" id="refreshBtn">Refresh Data</button>
+  <div class="top-left">
+    <button type="button" class="menubtn" id="menuBtn" aria-label="Mở menu" aria-expanded="false" aria-controls="side" title="Đóng / mở thanh điều hướng">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></svg>
+    </button>
+    <h1 class="wm">
+      <span class="wm-badge" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none">
+          <rect x="2" y="2" width="20" height="20" rx="4" stroke="currentColor" stroke-width="2"/>
+          <path d="M7 8h10M7 12h6.5M7 16h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="16.8" cy="15.8" r="2.6" fill="var(--accent)"/>
+        </svg>
+      </span>
+      <span class="wm-main">ExhibitFlow</span>
+      <span class="wm-sep" aria-hidden="true">/</span>
+      <span class="wm-sub" id="viewTitle">Giám sát phòng trưng bày</span>
+    </h1>
+  </div>
+
+  <div class="top-right">
+    <button type="button" class="chip bad" id="beChip" title="Mở Cài đặt để kết nối máy chủ Backend"><b></b><span>Mất kết nối</span></button>
+    <span class="chip clock" id="clock" aria-label="Thời gian hiện tại"></span>
+    <button type="button" class="btn btn-icon" id="refreshBtn" aria-label="Kiểm tra kết nối và tải lại dữ liệu" title="Kiểm tra kết nối và tải lại dữ liệu">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+      <span>Làm mới</span>
+    </button>
+  </div>
 </header>
 
 <main>
 <!-- ============ DASHBOARD ============ -->
 <section id="v-dash">
-  <div class="kpis" id="kpis"></div>
+  <div class="conn-banner" id="connBanner" role="status" hidden>
+    <div class="conn-banner-content">
+      <span class="conn-banner-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      </span>
+      <div class="conn-banner-text" id="connBannerText">Mất kết nối Backend</div>
+    </div>
+    <button type="button" class="btn sm pri" id="connBannerBtn">Mở cài đặt</button>
+  </div>
 
-  <div class="grid">
-    <div class="col">
-      <div class="card">
-        <h3><span id="vtitle">Phân tích</span> <span class="sp"></span><div class="filters" id="modeSel" title="Video: chạy hết video rồi hiện kết quả. Realtime: chạy đúng nhịp fps, cảnh báo hiện dần"><button class="tg on" data-mode="batch">Video</button><button class="tg" data-mode="rt">Realtime</button></div><span class="vstat" id="vstat">Chưa chạy</span></h3>
-        <div class="srcrow">
-          <div class="srcvar" id="srcFile">
-            <input id="src" class="txt" type="text" placeholder="Đường dẫn file / thư mục (trên server) hoặc URL video (.mp4 ...)" spellcheck="false">
-            <select id="siteSel" class="txt" hidden title="Địa điểm đã hiệu chuẩn: ghép các video thành một map chung"></select>
-            <input type="file" id="file" accept="video/*" multiple hidden>
-            <button class="btn" id="uploadBtn">Upload</button>
-          </div>
-          <div class="srcvar" id="srcCam" hidden>
-            <select id="camSel" class="txt"></select>
-            <input id="camUrl" class="txt" type="text" placeholder="rtsp://user:pass@ip:554/stream" spellcheck="false" hidden>
-          </div>
-          <button class="btn pri" id="runBtn">Phân tích</button>
-          <button class="btn stop" id="stopBtn" disabled>Dừng</button>
+  <!-- Thanh chỉ số tổng quan thống nhất -->
+  <div class="kpis" id="kpis" aria-label="Chỉ số phiên phân tích"></div>
+
+  <!-- Bàn giám sát đồng bộ: Video & Mặt bằng 2D -->
+  <div class="obs-deck grid">
+    <div class="col obs-pane obs-video">
+      <div class="pane-head">
+        <div class="pane-title-group">
+          <h2 id="vtitle">Phân tích video (CAM 1)</h2>
+          <span class="vstat" id="vstat">Chưa chạy</span>
         </div>
-        <div class="srcmsg" id="srcmsg"></div>
-        <div class="calbox" id="calBox" hidden>
-          <div class="calhd"><b>Hiệu chuẩn camera</b></div>
-          <div class="calrows" id="calRows"></div>
-          <div class="calrow" id="calAllRow"><span>Một file chung cho tất cả camera</span><input type="file" id="calAll" accept=".json,application/json" hidden><button class="btn sm" id="calAllBtn" type="button">Chọn file</button><em id="calAllName">chưa chọn</em><button class="calx" id="calAllClr" type="button" title="Xóa file hiệu chuẩn chung" aria-label="Xóa file hiệu chuẩn chung" hidden>×</button></div>        </div>
-        <div class="vbar"><div class="camtabs" id="camTabs" hidden></div><div class="live grn" id="live" hidden></div><div class="rthud" id="rthud" hidden></div></div>
-        <div class="stage-wrap">
-          <video id="vid" playsinline muted hidden></video>
-          <img id="liveimg" alt="" hidden>
-          <canvas id="scene"></canvas>
-          <div id="vmsg"><div><b>Chưa có video</b><span>Bấm Upload hoặc nhập đường dẫn / URL, rồi bấm Phân tích.</span></div></div>
+        <div class="filters seg-track" id="modeSel" title="Video: xử lý trọn vẹn tệp video rồi hiển thị kết quả. Realtime: phát và cập nhật cảnh báo theo thời gian thực">
+          <button type="button" class="tg on" data-mode="batch">Video</button>
+          <button type="button" class="tg" data-mode="rt">Realtime</button>
         </div>
-        <div class="ctrl">
-          <button class="btn sm" id="play">▶</button>
+      </div>
+
+      <div class="srcrow">
+        <div class="srcvar" id="srcFile">
+          <input id="src" class="txt" type="text" placeholder="Đường dẫn tệp / thư mục trên server hoặc URL video (.mp4)" spellcheck="false" aria-label="Nguồn video">
+          <select id="siteSel" class="txt" hidden title="Địa điểm đã hiệu chuẩn: ghép nhiều góc máy vào chung một mặt bằng 2D" aria-label="Chọn địa điểm đã hiệu chuẩn"></select>
+          <input type="file" id="file" accept="video/*" multiple hidden>
+          <button type="button" class="btn btn-icon" id="uploadBtn">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span>Tải video</span>
+          </button>
+        </div>
+        <div class="srcvar" id="srcCam" hidden>
+          <select id="camSel" class="txt" aria-label="Chọn camera trực tiếp"></select>
+          <input id="camUrl" class="txt" type="text" placeholder="rtsp://user:pass@ip:554/stream" spellcheck="false" hidden aria-label="URL luồng camera">
+        </div>
+        <div class="src-actions">
+          <button type="button" class="btn pri" id="runBtn">Phân tích</button>
+          <button type="button" class="btn stop" id="stopBtn" disabled>Dừng</button>
+        </div>
+      </div>
+
+      <div class="srcmsg" id="srcmsg" aria-live="polite"></div>
+
+      <div class="calbox" id="calBox" hidden>
+        <div class="calhd">
+          <b>Hiệu chuẩn camera đa góc</b>
+          <span class="calhint">Tải tệp hiệu chuẩn JSON riêng cho từng camera hoặc một tệp cấu hình chung để ghép chung mặt bằng.</span>
+        </div>
+        <div class="calrows" id="calRows"></div>
+        <div class="calrow" id="calAllRow">
+          <span>Một tệp chung cho tất cả camera</span>
+          <input type="file" id="calAll" accept=".json,application/json" hidden>
+          <button class="btn sm" id="calAllBtn" type="button">Chọn tệp</button>
+          <em id="calAllName">chưa chọn</em>
+          <button class="calx" id="calAllClr" type="button" title="Xóa tệp hiệu chuẩn chung" aria-label="Xóa tệp hiệu chuẩn chung" hidden>×</button>
+        </div>
+      </div>
+
+      <div class="vbar">
+        <div class="camtabs" id="camTabs" hidden></div>
+        <div class="live grn" id="live" hidden></div>
+        <div class="rthud" id="rthud" hidden></div>
+      </div>
+
+      <div class="stage-wrap">
+        <video id="vid" playsinline muted hidden></video>
+        <img id="liveimg" alt="Luồng khung hình trực tiếp" hidden>
+        <canvas id="scene"></canvas>
+        <div id="vmsg">
+          <div class="vmsg-inner">
+            <span class="vmsg-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+            </span>
+            <b>Chưa có video phân tích</b>
+            <span>Chọn tệp video từ máy hoặc nhập đường dẫn nguồn ở trên, sau đó nhấn Phân tích.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="ctrl">
+        <div class="ctrl-play">
+          <button type="button" class="btn sm playbtn" id="play" aria-label="Phát hoặc tạm dừng">▶</button>
           <span class="time" id="time">0:00 / 0:00</span>
-          <select id="speed" style="width:70px"><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select>
-          <div class="tog" id="layers">
-            <button class="tg on sim-only" data-l="boxes">Bounding box</button>
-            <button class="tg sim-only" data-l="skel">Skeleton</button>
-            <button class="tg on" data-l="labels">Nhãn</button>
-            <button class="tg" data-l="art">Hiện vật</button>
-          </div>
+          <select id="speed" class="speed-sel" aria-label="Tốc độ phát">
+            <option value="0.5">0.5x</option>
+            <option value="1" selected>1x</option>
+            <option value="2">2x</option>
+            <option value="4">4x</option>
+          </select>
         </div>
-        <div class="tl" id="tl"><svg id="occ" preserveAspectRatio="none"></svg><div class="ph" id="ph"></div></div>
-        <div class="legend">
-          <span style="--c:var(--touch)">Chạm</span><span style="--c:var(--hold)">Cầm / nhấc</span><span style="--c:var(--steal)">Nghi lấy cắp</span><span style="--c:var(--cand)">Cần xác nhận</span><span style="--c:var(--norm)">Bình thường</span>
+        <div class="tog" id="layers" aria-label="Lớp hiển thị trên video">
+          <button type="button" class="tg on sim-only" data-l="boxes">Khung nhận diện</button>
+          <button type="button" class="tg sim-only" data-l="skel">Khung xương</button>
+          <button type="button" class="tg on" data-l="labels">Nhãn</button>
+          <button type="button" class="tg" data-l="art">Hiện vật</button>
         </div>
+      </div>
+
+      <div class="tl" id="tl" tabindex="0" role="slider" aria-label="Thanh thời gian video" aria-valuemin="0" aria-valuemax="60" aria-valuenow="0" title="Bấm vào thanh thời gian hoặc dùng phím mũi tên trái/phải để tua">
+        <svg id="occ" preserveAspectRatio="none"></svg>
+        <div class="ph" id="ph"></div>
+      </div>
+
+      <div class="legend">
+        <span style="--c:var(--touch)">Chạm hiện vật</span>
+        <span style="--c:var(--hold)">Cầm / nhấc</span>
+        <span style="--c:var(--steal)">Nghi lấy cắp</span>
+        <span style="--c:var(--cand)">Cần xác nhận</span>
+        <span style="--c:var(--norm)">Bình thường</span>
       </div>
     </div>
 
-    <div class="col">
-      <div class="card">
-        <h3>Map 2D · Hành vi <span class="sp"></span><span class="vstat" id="mapCount">0 người</span></h3>
+    <div class="col obs-pane obs-map">
+      <div class="obs-map-inner">
+        <div class="pane-head">
+          <div class="pane-title-group">
+            <h2>Bản đồ mặt bằng 2D</h2>
+          </div>
+          <span class="count-pill" id="mapCount">0 người</span>
+        </div>
+
         <div class="mapwrap">
           <canvas id="map"></canvas>
           <div class="mapnote" id="mapNote" hidden>Chưa có dữ liệu bản đồ 2D cho kết quả này.</div>
         </div>
+
         <div class="mapfoot">
           <span class="vstat" id="mapInfo"></span>
         </div>
-        <div class="ctrl">
-          <div class="legend" style="margin:0">
-            <span style="--c:var(--ok)">Người</span><span style="--c:var(--touch)">Đang chạm</span><span style="--c:var(--steal)">Cảnh báo</span><span style="--c:var(--art)">Hiện vật</span>
+
+        <div class="map-legend-bar">
+          <div class="legend">
+            <span style="--c:var(--ok)">Khách tham quan</span>
+            <span style="--c:var(--touch)">Đang chạm</span>
+            <span style="--c:var(--steal)">Cảnh báo</span>
+            <span style="--c:var(--art)">Hiện vật</span>
           </div>
         </div>
       </div>
     </div>
   </div>
 
+  <!-- Phân tích không gian -->
+  <div class="sec-head">
+    <h2>Phân tích không gian</h2>
+    <p>Luồng di chuyển chủ đạo và mật độ tập trung của khách tham quan trên mặt bằng</p>
+  </div>
+
   <section class="mappanels" id="mapPanels">
-    <div class="card" id="panel-mapFlow">
-      <h3>Luồng đi <span class="sp"></span></h3>
+    <div class="card sheet" id="panel-mapFlow">
+      <div class="panel-head">
+        <h3>Luồng di chuyển</h3>
+      </div>
       <div class="mapwrap"><canvas id="mapFlow"></canvas></div>
       <p class="mpinfo" id="infoFlow"></p>
     </div>
-    <div class="card" id="panel-mapHeat">
-      <h3>Heatmap <span class="sp"></span><div class="filters" id="heatModes" title="Chọn chỉ số hiển thị trên heatmap"><button class="tg on" data-hm="presence">Mật độ</button><button class="tg" data-hm="visitors">Lượt khách</button><button class="tg" data-hm="dwell">Dừng chân</button><button class="tg" data-hm="deadzone" title="Chỗ hầu như không ai tới (tính trên cả video)">Vùng chết</button></div></h3>
+
+    <div class="card sheet" id="panel-mapHeat">
+      <div class="panel-head">
+        <h3>Bản đồ nhiệt</h3>
+        <div class="filters seg-track" id="heatModes" title="Chọn chỉ số hiển thị trên bản đồ nhiệt">
+          <button type="button" class="tg on" data-hm="presence">Mật độ</button>
+          <button type="button" class="tg" data-hm="visitors">Lượt khách</button>
+          <button type="button" class="tg" data-hm="dwell">Dừng chân</button>
+          <button type="button" class="tg" data-hm="deadzone" title="Chỗ hầu như không ai tới (tính trên cả video)">Vùng chết</button>
+        </div>
+      </div>
       <div class="mapwrap"><canvas id="mapHeat"></canvas></div>
       <p class="mpinfo" id="infoHeat"></p>
     </div>
-    <div class="card exstats" id="exStats" hidden>
-      <h3>Dừng chân theo hiện vật <span class="sp"></span><button class="btn sm" id="exCsv" type="button">Xuất CSV</button></h3>
+
+    <div class="card sheet exstats" id="exStats" hidden>
+      <div class="panel-head">
+        <h3>Dừng chân theo hiện vật</h3>
+        <button class="btn sm" id="exCsv" type="button">Xuất CSV</button>
+      </div>
       <div class="exwrap"><table><thead><tr><th>Hiện vật</th><th>Khách dừng</th><th class="num">Tổng</th><th class="num">TB/khách</th><th>Mức chú ý</th></tr></thead><tbody id="exRows"></tbody></table></div>
       <p class="exnone" id="exNone"></p>
       <p class="mpinfo" id="exNote"></p>
     </div>
   </section>
 
-  <div class="grid2">
-    <div class="card">
-      <h3>Cảnh báo hành vi <span class="sp"></span>
-        <div class="filters" id="filters">
-          <button class="tg on" data-f="all">Tất cả</button><button class="tg" data-f="ANOMALY">Bất thường</button><button class="tg" data-f="CANDIDATE">Cần xác nhận</button><button class="tg" data-f="NORMAL">Đã loại</button>
+  <!-- Nhật ký & Kiểm duyệt -->
+  <div class="sec-head">
+    <h2>Nhật ký &amp; Kiểm duyệt</h2>
+    <p>Xem lại các lượt phân tích đã lưu và duyệt cảnh báo hành vi từ mô hình VLM</p>
+  </div>
+
+  <div class="card ledger" id="jobsCard">
+    <div class="panel-head">
+      <h3>Lịch sử phân tích</h3>
+      <div class="panel-controls">
+        <div class="filters seg-track" id="jobsFilters">
+          <button type="button" class="tg on" data-jf="all">Tất cả</button>
+          <button type="button" class="tg" data-jf="done">Hoàn tất</button>
+          <button type="button" class="tg" data-jf="active">Đang chạy / Hàng đợi</button>
+          <button type="button" class="tg" data-jf="error">Lỗi</button>
         </div>
-        <button class="btn sm" id="csvBtn">Xuất CSV</button></h3>
+        <button type="button" class="btn sm" id="jobsRefreshBtn">Làm mới</button>
+      </div>
+    </div>
+    <div class="jobs-table-wrap" id="jobsList"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card ledger">
+      <div class="panel-head">
+        <h3>Cảnh báo hành vi</h3>
+        <div class="panel-controls">
+          <div class="filters seg-track" id="alertScopeSel" title="Phạm vi cảnh báo: chỉ video đang mở hoặc toàn bộ lịch sử lưu trên máy chủ">
+            <button type="button" class="tg on" data-scope="current">Video hiện tại</button>
+            <button type="button" class="tg" data-scope="global">Toàn lịch sử</button>
+          </div>
+          <span class="ctrl-sep" aria-hidden="true"></span>
+          <div class="filters" id="filters">
+            <button type="button" class="tg on" data-f="all">Tất cả</button>
+            <button type="button" class="tg" data-f="ANOMALY">Bất thường</button>
+            <button type="button" class="tg" data-f="CANDIDATE">Cần xác nhận</button>
+            <button type="button" class="tg" data-f="NORMAL">Đã loại</button>
+          </div>
+          <button type="button" class="btn sm btn-icon" id="csvBtn">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span>Xuất CSV</span>
+          </button>
+        </div>
+      </div>
       <div class="alerts" id="alerts"></div>
     </div>
   </div>
@@ -139,32 +318,119 @@
 
 <!-- ============ SETTINGS ============ -->
 <section id="v-set" hidden>
+  <div class="sec-head sec-head-top">
+    <h2>Cài đặt kết nối &amp; phân tích</h2>
+    <p>Quản lý máy chủ Backend (CPU FastAPI), nút tính toán GPU Worker, nguồn camera trực tiếp và ngưỡng cảnh báo VLM</p>
+  </div>
+
   <div class="setgrid">
-    <div class="card">
-      <h3>Kết nối backend (Kaggle / Colab)</h3>
-      <div class="opt"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="beDirect"> Chạy trực tiếp trên GPU server (không cần URL backend)</label></div>
-      <div class="opt"><label>URL backend <span id="beMsg">chưa kết nối</span></label>
-        <input type="text" id="beUrl" class="txt" placeholder="https://xxxx.trycloudflare.com" spellcheck="false"></div>
-      <div class="row"><button class="btn pri" id="beBtn">Kết nối</button><button class="btn" id="beOff">Ngắt</button></div>
-      <p class="note">Chạy notebook <code>exhibitflow_kaggle_server.ipynb</code> trên Kaggle, copy URL in ở ô "Mở đường hầm" rồi dán vào đây. Nếu bạn mở dashboard bằng chính link của GPU server (vd. Vast <code>http://IP:port</code>), bật ô "Chạy trực tiếp" ở trên: trang sẽ gọi API cùng địa chỉ. Kết nối xong, quay lại Dashboard để Upload hoặc nhập đường dẫn video và bấm Phân tích.</p>
+    <div class="card set-card">
+      <div class="panel-head">
+        <h3>Máy chủ Backend (CPU FastAPI)</h3>
+        <span class="status-tag" id="beMsg">chưa kết nối</span>
+      </div>
+
+      <div class="opt opt-check">
+        <label for="beDirect">
+          <input type="checkbox" id="beDirect">
+          <span>Chạy trực tiếp trên máy chủ backend (cùng domain / origin)</span>
+        </label>
+      </div>
+
+      <div class="opt">
+        <label for="beUrl">URL máy chủ Backend</label>
+        <input type="text" id="beUrl" class="txt mono" placeholder="http://127.0.0.1:8000 hoặc https://backend.trycloudflare.com" spellcheck="false">
+      </div>
+
+      <div class="opt">
+        <label for="beKey">Mã truy cập Backend (API Key)</label>
+        <input type="password" id="beKey" class="txt mono" placeholder="Nhập mã truy cập nếu máy chủ bật xác thực" spellcheck="false">
+      </div>
+
+      <div class="opt opt-check">
+        <label for="beRememberKey">
+          <input type="checkbox" id="beRememberKey">
+          <span>Ghi nhớ mã truy cập sau khi đóng trình duyệt</span>
+        </label>
+      </div>
+
+      <div class="row">
+        <button type="button" class="btn pri" id="beBtn">Kết nối</button>
+        <button type="button" class="btn" id="beOff">Ngắt kết nối</button>
+      </div>
+
+      <p class="note">Máy chủ Backend điều phối hàng đợi phân tích, lưu trữ lịch sử video và cảnh báo. Mã truy cập Backend tách biệt hoàn toàn với <code>X-GPU-Token</code>.</p>
     </div>
-    <div class="card">
-      <h3>Camera (Realtime)</h3>
+
+    <div class="card set-card">
+      <div class="panel-head">
+        <h3>GPU Worker (Vast.ai / cloudflared)</h3>
+        <span class="status-tag" id="gpuMsg">chưa kết nối</span>
+      </div>
+
+      <div class="opt">
+        <label for="gpuUrl">Địa chỉ GPU Worker URL</label>
+        <input type="text" id="gpuUrl" class="txt mono" placeholder="https://xxxx.trycloudflare.com hoặc http://IP:8001" spellcheck="false">
+      </div>
+
+      <div class="opt">
+        <label for="gpuToken">Mã bảo mật <code>X-GPU-Token</code></label>
+        <input type="password" id="gpuToken" class="txt mono" placeholder="Mã token bảo mật GPU" spellcheck="false">
+      </div>
+
+      <div class="row">
+        <button type="button" class="btn pri" id="gpuSaveBtn">Lưu &amp; Kiểm tra</button>
+      </div>
+
+      <p class="note">GPU Worker đảm nhiệm các mô hình AI nặng (YOLO, ByteTrack, Qwen3-VL, Floorplan). Khi GPU ngoại tuyến, bạn vẫn xem lại được toàn bộ video, bản đồ và cảnh báo đã lưu trên Backend.</p>
+    </div>
+
+    <div class="card set-card">
+      <div class="panel-head">
+        <h3>Danh sách Camera (Realtime)</h3>
+      </div>
+
       <div class="camlist" id="camList"></div>
-      <div class="opt"><label>Thêm camera</label>
-        <input id="camName" class="txt" placeholder="Tên (vd. CAM 3 · Phòng tranh)" style="margin-bottom:8px">
-        <input id="camAddUrl" class="txt" placeholder="rtsp://user:pass@ip:554/stream" spellcheck="false"></div>
-      <div class="row"><button class="btn pri" id="camAdd">Thêm</button></div>
-      <p class="note">Danh sách lưu trong trình duyệt. Backend hiện <b>chưa đọc được camera trực tiếp</b> (RTSP/RTMP): pipeline mới chỉ đọc file video.</p>
+
+      <div class="opt">
+        <label for="camName">Thêm camera mới</label>
+        <div class="stack-inputs">
+          <input id="camName" class="txt" placeholder="Tên camera (vd. CAM 3 · Phòng tranh)">
+          <input id="camAddUrl" class="txt mono" placeholder="rtsp://user:pass@ip:554/stream" spellcheck="false">
+        </div>
+      </div>
+
+      <div class="row">
+        <button type="button" class="btn pri" id="camAdd">Thêm camera</button>
+      </div>
+
+      <p class="note">Danh sách camera được lưu cục bộ trong trình duyệt. Backend hiện <b>chưa hỗ trợ đọc luồng trực tiếp RTSP/RTMP</b>; pipeline hiện tại xử lý tệp video.</p>
     </div>
-    <div class="card">
-      <h3>Cấu hình phân tích</h3>
-      <div class="opt"><label>Ngưỡng tin cậy VLM <span><input type="number" class="numin" id="confN" min="0" max="1" step="0.01" value="0.60" inputmode="decimal"></span></label>
-        <input type="range" id="conf" min="0" max="1" step="0.01" value="0.6"></div>
-      <p class="note">Chỉ cảnh báo khi VLM trả hành vi bất thường với độ tin cậy từ ngưỡng này trở lên.</p>
-      <div class="opt"><label>Ngưỡng phát hiện người (detector) <span><input type="number" class="numin" id="detN" min="0.01" max="0.99" step="0.01" value="0.01" inputmode="decimal"> <em id="detV">(mặc định)</em></span></label>
-        <input type="range" id="detConf" min="0.01" max="0.99" step="0.01" value="0.01"></div>
-      <div class="row"><button class="btn" id="detReset">Về mặc định</button></div>
+
+    <div class="card set-card">
+      <div class="panel-head">
+        <h3>Cấu hình phân tích VLM &amp; Detector</h3>
+      </div>
+
+      <div class="opt">
+        <label for="conf">Ngưỡng tin cậy VLM <span class="opt-inline"><input type="number" class="numin" id="confN" min="0" max="1" step="0.01" value="0.60" inputmode="decimal" aria-label="Ngưỡng tin cậy VLM"></span></label>
+        <input type="range" id="conf" min="0" max="1" step="0.01" value="0.6">
+        <div class="range-scale">
+          <span>0.00 (nhạy hơn)</span>
+          <span>0.60</span>
+          <span>1.00 (chặt hơn)</span>
+        </div>
+      </div>
+
+      <p class="note">Hệ thống chỉ nâng mức cảnh báo hành vi bất thường khi mô hình VLM trả độ tin cậy từ ngưỡng này trở lên.</p>
+
+      <div class="opt">
+        <label for="detConf">Ngưỡng phát hiện người (detector) <span class="opt-inline"><input type="number" class="numin" id="detN" min="0.01" max="0.99" step="0.01" value="0.01" inputmode="decimal" aria-label="Ngưỡng phát hiện người"> <em id="detV">(mặc định)</em></span></label>
+        <input type="range" id="detConf" min="0.01" max="0.99" step="0.01" value="0.01">
+      </div>
+      <div class="row">
+        <button type="button" class="btn" id="detReset">Về mặc định</button>
+      </div>
       <p class="note">Ngưỡng thấp: bắt được nhiều người hơn nhưng dễ có khung thừa. Ngưỡng cao: ít khung thừa nhưng có thể sót người. Áp dụng cho server ngay, hiệu lực từ lượt phân tích kế tiếp (cần kết nối backend).</p>
     </div>
   </div>

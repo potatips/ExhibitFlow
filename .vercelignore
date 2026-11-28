@@ -1,0 +1,11 @@
+backend/
+GPU_server/
+.venv/
+backend_data/
+gpu_data/
+docs/
+external/
+.make/
+*.db*
+*.mp4
+.env*

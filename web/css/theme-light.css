@@ -1,101 +1,80 @@
-/* Giao diện trắng - đen - cam, đồng bộ slide và report FPT. Nạp SAU style.css để đè màu. */
-:root{
-  --bg:#F4F5F7; --panel:#FFFFFF; --panel2:#F7F8FA; --line:#E0E3E8; --text:#111214; --muted:#555C66;
-  --accent:#F37021; --accent-d:#B4500E; --accent-l:#F7924F;
-  --dark:#111214; --dark2:#FAFAFB; --dline:#E0E3E8; --on-dark:#FFFFFF; --on-dark-2:#B9BEC6;
-  --ok:#137A4B; --warn:#8F5B00; --steal:#C62828; --hold:#C2500C; --touch:#A86A00; --cand:#5B48C9; --norm:#5F6670; --art:#1F6FC4;
-  color-scheme:light;
+/* ============================================================================
+ * ExhibitFlow — Gallery Control Atlas Light Theme
+ * Mineral limestone canvas + plinth white instruments + archival carbon +
+ * disciplined ExhibitFlow vermilion-orange (#E85D1A).
+ * Loaded after style.css so theme tokens remain cleanly separated.
+ * ============================================================================ */
+
+:root {
+  color-scheme: light;
+  --bg: #F3F4F2;
+  --panel: #FFFFFF;
+  --panel2: #ECEFEB;
+  --panel-subtle: #F7F8F6;
+  --line: #D8DDD9;
+  --line-strong: #C3CAC5;
+  --text: #121518;
+  --muted: #555E66;
+  --muted-soft: #78828A;
+
+  --dark: #121518;
+  --dark2: #0D1013;
+  --dline: #272E34;
+  --on-dark: #F4F6F5;
+  --on-dark-2: #9AA4AD;
+
+  --accent: #E85D1A;
+  --accent-d: #C4490E;
+  --accent-l: #F47A3E;
+  --accent-wash: #FDF0E8;
+
+  --ok: #157347;
+  --ok-wash: #E6F4EC;
+  --ok-line: #B2DEC4;
+  --warn: #9A6000;
+  --warn-wash: #FDF4DF;
+  --warn-line: #EAD092;
+  --steal: #C2272D;
+  --steal-wash: #FDEBED;
+  --steal-line: #F0B6B9;
+  --hold: #C95214;
+  --touch: #A36800;
+  --cand: #5542C4;
+  --cand-wash: #EFEBFD;
+  --cand-line: #CEC4F2;
+  --norm: #636C74;
+  --art: #1B64B8;
+  --art-wash: #E8F1FC;
 }
-html,body{background:var(--bg);color:var(--text)}
-#hexbg{display:none}
 
-/* đầu trang trắng, vạch cam như slide */
-.top{background:#FFFFFF;color:var(--text);border-bottom:2px solid var(--accent)}
-/* tên ExhibitFlow: đen loang dần sang cam (đứng yên để lúc nào cũng thấy đủ hai màu) */
-.top h1.wm .wm-main{background:linear-gradient(95deg,#111214 0%,#111214 26%,#8A3708 42%,#F36A14 60%,#F37021 78%,#FF9A3D 100%);
-  background-size:100% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;filter:none;animation:none}
-.wm-sub{color:var(--muted)}
-.menubtn{background:#FFFFFF;border-color:var(--line);color:#111214}
-.menubtn:hover,.app.open .menubtn{border-color:var(--accent);color:var(--accent-d)}
+/* Subtle tactile depth reserved strictly for the primary Observation Deck */
+.obs-deck {
+  box-shadow: 0 1px 2px rgba(18, 21, 24, 0.04), 0 8px 24px -18px rgba(18, 21, 24, 0.14);
+}
 
-/* thanh bên đen */
-.side{background:#111214;color:#FFFFFF}
-.tab{color:#D5D8DD}
-.tab:hover{background:rgba(255,255,255,.08);color:#FFFFFF}
-.tab.on{background:var(--accent);color:#111214;font-weight:600}
-.tab.on svg{stroke:#111214}
-.brand i{background:var(--accent);color:#111214}
-.brand b,.side-foot .fl{color:#FFFFFF}
+/* Crisp drafting hairline feel on secondary sheets & ledgers */
+.kpis,
+.card {
+  box-shadow: 0 1px 0 rgba(18, 21, 24, 0.03);
+}
 
-/* thẻ, ô số liệu */
-.card,.kpi{background:#FFFFFF;border:1px solid var(--line);box-shadow:0 1px 2px rgba(17,18,20,.05)}
-.card h3,.kpi b{color:var(--text)}
-.kpi.red{border-color:var(--steal)}
-.kpi.red b{color:var(--steal)}
+/* High-contrast review buttons inside alert cards */
+.al .acts .btn[data-rv="ok"]:hover,
+.al .acts .btn[data-global-rv="ok"]:hover {
+  border-color: var(--ok);
+  color: var(--ok);
+  background: var(--ok-wash);
+}
 
-/* nút, ô nhập, bộ lọc */
-.btn,.top .btn{background:#FFFFFF;color:var(--text);border-color:#C9CDD3}
-.btn:hover,.top .btn:hover{border-color:var(--accent);color:var(--accent-d)}
-.btn.pri,.btn.pri:hover{background:var(--accent);border-color:var(--accent);color:#111214;font-weight:700}
-.btn.pri:hover{background:var(--accent-l);border-color:var(--accent-l)}
-.btn.stop:not(:disabled){background:#FDECEA;border-color:#EBB4AF;color:var(--steal)}
-.txt,input.txt,select.txt{background:#FFFFFF;color:var(--text);border-color:#C9CDD3}
-.txt::placeholder{color:#767D87}
-.chip,.top .chip{background:#FFFFFF;color:var(--muted);border-color:var(--line)}
-.chip.ok,.top .chip.ok{background:#E7F5EE;color:var(--ok);border-color:#A9D9C1}
-.chip.bad,.top .chip.bad{background:#FDECEA;color:var(--steal);border-color:#EBB4AF}
-#filters .tg,.filters .tg,.tog .tg,.camtabs .tg{background:#FFFFFF;color:var(--muted);border:1px solid #C9CDD3}
-#filters .tg.on,.filters .tg.on,.tog .tg.on,.camtabs .tg.on{background:var(--accent);border-color:var(--accent);color:#111214;font-weight:600}
-.filters{background:transparent;border-color:transparent;padding:0;gap:4px}
+.al .acts .btn[data-rv="no"]:hover,
+.al .acts .btn[data-global-rv="no"]:hover {
+  border-color: var(--muted);
+  color: var(--text);
+  background: var(--panel2);
+}
 
-/* video giữ nền đen; map và biểu đồ nền trắng */
-.stage-wrap{background:#0B0C0E;border-color:#111214}
-.mapwrap canvas,.an-canvas-wrap{background:#FFFFFF;border:1px solid var(--line)}
-.mapnote{background:#FAFAFB;color:var(--muted)}
-.tl{background:var(--panel2);border-color:var(--line)}
-.calbox{background:var(--panel2);border-color:var(--line)}
-
-/* cảnh báo */
-.al{background:#FFFFFF;border:1px solid var(--line)}
-.al:hover{background:var(--panel2)}
-.al.act{background:#FFF1E8;box-shadow:inset 0 0 0 1px var(--accent)}
-.al .why{color:#3A4048}
-.pill{background:#E7F5EE;color:var(--ok)}
-.kpi.red .pill,.lv.hi{background:#FDECEA;color:var(--steal)}
-.kpi.yel .pill{background:#EEEBFB;color:var(--cand)}
-.lv.mid{background:#FFF1E8;color:var(--accent-d)}
-.lv.lo{background:#FFF6E0;color:var(--warn)}
-.camrow{background:var(--panel2)}
-
-/* khu phân tích */
-.an-priv{color:var(--ok);background:#E7F5EE;border-color:#A9D9C1}
-.an-row,.an-arch-item,.an-mk{background:var(--panel2);border-color:var(--line)}
-.an-q{color:#111214!important}
-.an-bar{background:#E9EBEF}
-.an-banner{background:var(--panel2);border-color:var(--line)}
-.an-banner.warn{background:#FFF6E0;border-color:#EBCB80;color:var(--warn)}
-.an-banner.ok{background:#E7F5EE;border-color:#A9D9C1;color:var(--ok)}
-.an-chip{background:#FFF1E8;border-color:#F6C3A0;color:var(--accent-d)}
-
-::selection{background:rgba(243,112,33,.28)}
-*{scrollbar-color:#B9BEC6 transparent}
-:focus-visible{outline:2px solid var(--accent-d);outline-offset:2px}
-.scrim{background:rgba(17,18,20,.45)}
-
-/* nhãn trạng thái trên video */
-.vbar .live,.vbar .rthud{background:#FFFFFF;border:1px solid var(--line);color:var(--text)}
-.vbar .live.grn{background:#E7F5EE;border-color:#A9D9C1;color:var(--ok)}
-.vbar .live.red{background:#C62828;border-color:#C62828;color:#FFFFFF}
-.vbar .live.yel{background:#FFF6E0;border-color:#EBCB80;color:var(--warn)}
-
-/* 4 khung phân tích trên map, hiện sẵn cạnh nhau (không phải bấm tab) */
-.mappanels{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:16px}
-.mappanels h3{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.mpinfo{font-size:12.5px;color:var(--muted);margin-top:8px;min-height:1.5em}
-@media(max-width:900px){.mappanels{grid-template-columns:1fr}}
-
-/* còn 3 thẻ phân tích: thẻ cuối chiếm cả hàng */
-.an-grid>.card:last-child{grid-column:1 / -1}
-
-/* chỉ còn danh sách cảnh báo ở hàng dưới */
-.grid2{grid-template-columns:1fr}
+.jobs-acts .btn[data-job-act="delete"]:not(:disabled):hover {
+  border-color: var(--steal);
+  color: var(--steal);
+  background: var(--steal-wash);
+}

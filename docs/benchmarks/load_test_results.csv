@@ -1,0 +1,6 @@
+scenario,concurrency,total_requests,ok_requests,failed_requests,failure_rate_pct,duration_s,rps,p50_ms,p95_ms,p99_ms,max_ms,note
+read_replay_mix,10,1501,1501,0,0.0,5.02,298.77,23.1,88.83,162.04,405.96,"7 mixed read/monitoring routes (health, jobs, result, map, alerts, system, metrics)"
+read_replay_mix,25,533,533,0,0.0,5.53,96.38,142.58,841.21,2095.42,2856.28,"7 mixed read/monitoring routes (health, jobs, result, map, alerts, system, metrics)"
+read_replay_mix,50,107,105,2,1.87,10.62,10.08,3048.98,9493.09,10163.12,10217.57,"7 mixed read/monitoring routes (health, jobs, result, map, alerts, system, metrics)"
+read_replay_mix,100,243,243,0,0.0,6.92,35.11,2453.48,4827.97,5094.34,5235.37,"7 mixed read/monitoring routes (health, jobs, result, map, alerts, system, metrics)"
+concurrent_job_submit,15,15,15,0,0.0,0.21,72.31,193.24,204.93,205.63,205.8,"FIFO max_queue_position=14, post_submit_queue_len=14, zero OOM/5xx"

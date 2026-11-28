@@ -1,0 +1,74 @@
+name: ExhibitFlow CI
+
+on:
+  push:
+    branches: [main, Khang, Hung_test]
+  pull_request:
+    branches: [main, Khang, Hung_test]
+  workflow_dispatch:
+
+jobs:
+  backend-tests:
+    name: CPU Backend Unit, Security, Metrics & E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install CPU backend & test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt pytest
+      - name: Compile check backend
+        run: python -m compileall -q backend
+      - name: Run backend tests
+        run: PYTHONPATH=. pytest backend/tests -v
+
+  gpu-worker-cpu-tests:
+    name: GPU Worker CPU-Safe Unit, Floorplan & Launcher Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install CPU-safe dependencies for GPU_server tests
+        run: |
+          python -m pip install --upgrade pip
+          pip install "fastapi>=0.115" "uvicorn[standard]>=0.30" "python-multipart>=0.0.9" \
+            "httpx>=0.27" "pydantic>=2.7" "psutil>=5.9" "pillow>=10.0" \
+            "numpy" "opencv-python-headless" pytest
+      - name: Syntax check Python and shell scripts
+        run: |
+          python -m compileall -q GPU_server
+          bash -n GPU_server/start_vast.sh GPU_server/setup.sh GPU_server/scripts/install_llama.sh
+      - name: Run GPU_server CPU test suite
+        run: PYTHONPATH=GPU_server pytest GPU_server/tests -v
+      - name: Dry-run GPU benchmark script
+        run: python GPU_server/scripts/benchmark_gpu.py --dry-run --out /tmp/ef_bench_ci
+
+  web-and-docker-check:
+    name: Static Web Tests & Docker Build Verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Syntax check and run Web unit tests
+        run: |
+          node --check web/js/playback.js
+          node --check web/js/errors.js
+          node --check web/js/exhibits.js
+          node --check web/js/heatmap.js
+          node --check web/js/app.js
+          node --test web/tests/heatmap.test.js web/tests/museum_analytics.test.js web/tests/errors.test.js web/tests/exhibits.test.js web/tests/playback.test.js
+      - name: Validate docker-compose configuration
+        run: docker compose config -q
+      - name: Verify CPU Backend & GPU Demo Docker images build cleanly
+        run: |
+          docker build -t exhibitflow-backend:ci backend/
+          docker build -f GPU_server/Dockerfile.demo -t exhibitflow-gpu-demo:ci GPU_server/
