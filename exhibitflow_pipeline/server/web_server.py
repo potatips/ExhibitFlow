@@ -361,6 +361,21 @@ def create_app(data_dir, demo=False, preload=True, mode=None, local=False):
             ms = state.models_state
         return {'ok': True, 'version': 'ef-web-1', 'demo': demo, 'models': ms, 'jobs': len(jobs), 'det_conf': web_cfg['det_conf']}
 
+    @app.post('/api/config')
+    async def set_config(request: Request):
+        """Đặt ngưỡng phát hiện người (detector conf) lúc đang chạy: {"det_conf": 0.3} hoặc null = mặc định của engine.
+        Áp ngay cho model đang nạp và cho mọi lượt phân tích sau (kể cả tiến trình camera song song)."""
+        try:
+            body = await request.json()
+        except Exception:                                  # noqa: BLE001
+            raise HTTPException(400, 'Body phải là JSON')
+        v = body.get('det_conf') if isinstance(body, dict) else None
+        if v is not None and parse_det_conf(v) is None:
+            raise HTTPException(400, 'det_conf phải nằm trong [0.001, 0.99] hoặc null')
+        web_cfg['det_conf'] = parse_det_conf(v)
+        applied = apply_det_conf(runner, web_cfg['det_conf'])
+        return {'det_conf': web_cfg['det_conf'], 'applied_now': applied}
+
     @app.get('/api/state')
     def get_state():
         return state.snapshot()
