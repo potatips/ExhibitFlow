@@ -39,9 +39,9 @@ function exData(){
   if(typeof SITEDATA==='undefined'||!SITEDATA||S.running||!SITEDATA.exhibits.length)return null;
   return SITEDATA.exStats||(SITEDATA.exStats=EFExhibits.stats(SITEDATA.frames,SITEDATA.exhibits))}
 function renderExStats(){const box=$('#exStats'),d=exData();box.hidden=!d;if(!d)return;
-  $('#exRows').innerHTML=d.rows.filter(r=>r.totalSec).map(r=>`<tr><td><b>#${r.id}</b></td><td>${esc(EFExhibits.kind(r))}</td><td class="num">${r.visitors.length?r.visitors.length+' <small>('+r.visitors.map(v=>'#'+v).join(', ')+')</small>':'0'}</td><td class="num">${Math.round(r.share*100)}%</td><td class="num">${r.totalSec.toFixed(1)} s</td><td class="num">${r.avgSec.toFixed(1)} s</td><td>${EFExhibits.level(r,d.rows)}</td></tr>`).join('');
+  $('#exRows').innerHTML=d.rows.filter(r=>r.totalSec).map(r=>`<tr><td><b>#${r.id}</b><small>${esc(EFExhibits.kind(r))}</small></td><td>${r.visitors.length} · ${Math.round(r.share*100)}%<small>${r.visitors.map(v=>'#'+v).join(', ')}</small></td><td class="num">${r.totalSec.toFixed(1)} s</td><td class="num">${r.avgSec.toFixed(1)} s</td><td>${EFExhibits.level(r,d.rows)}</td></tr>`).join('');
   const none=d.rows.filter(r=>!r.totalSec).map(r=>'#'+r.id);
-  if(!d.rows.some(r=>r.totalSec))$('#exRows').innerHTML='<tr class="none"><td colspan="7">Chưa có khách nào dừng trước hiện vật.</td></tr>';
+  if(!d.rows.some(r=>r.totalSec))$('#exRows').innerHTML='<tr class="none"><td colspan="5">Chưa có khách nào dừng trước hiện vật.</td></tr>';
   $('#exNone').textContent=none.length?`Chưa ai dừng (${none.length} hiện vật): ${none.join(', ')}`:'';
   $('#exNote').textContent=`Ước tính từ vị trí trên map: khách đứng yên trong ${EFExhibits.REACH} m trước hiện vật từ ${EFExhibits.MIN_STOP} giây (không biết hướng nhìn) · ${d.visitors} khách, video ${(SITEDATA.duration||0).toFixed(0)} s.`}
 $('#exCsv').onclick=()=>{const d=exData();if(!d)return;

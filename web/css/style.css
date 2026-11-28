@@ -530,15 +530,16 @@ html,body{color:var(--text)}
 .numin{width:78px;padding:3px 6px;font:inherit;font-size:13px;text-align:right;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:inherit}
 .opt label em{font-style:normal;margin-left:4px}
 
-/* ---------- Bảng thống kê dừng chân theo hiện vật ---------- */
-.exstats{margin-bottom:16px}
+/* ---------- Bảng thống kê dừng chân theo hiện vật: nằm ngay dưới khung Heatmap, cùng bề ngang ---------- */
+.exstats{grid-column:2;min-width:0}
 .exstats[hidden]{display:none}
+.exstats h3{display:flex;align-items:center;gap:8px}
 .exwrap{overflow-x:auto}
-.exstats table{width:100%;border-collapse:collapse;font-size:13px}
-.exstats th,.exstats td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
-.exstats th{font-size:12px;color:var(--muted);font-weight:600}
-.exstats .num{text-align:right;font-variant-numeric:tabular-nums}
-.exstats small{color:var(--muted)}
+.exstats table{width:100%;border-collapse:collapse;font-size:12.5px}
+.exstats th,.exstats td{padding:5px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.exstats th{font-size:11.5px;color:var(--muted);font-weight:600}
+.exstats .num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.exstats small{display:block;font-size:11px;color:var(--muted)}
 .exstats tr.none td{color:var(--muted)}
-.exnone{margin:10px 0 0;font-size:13px}
-
+.exnone{margin:8px 0 0;font-size:12.5px}
+@media(max-width:900px){.exstats{grid-column:auto}}
